@@ -418,3 +418,35 @@ pending 완료 기록이 남은 작업은 `EXPIRED_UNFINISHED`, 이미 소비된
 중단된 정리는 같은 작업ID와 승인 근거로 재개합니다. 새 pending 기록, 변경된 증거 또는 알 수 없는 보관 상태가 발견되면 중단하며 원장을 수리하거나 승인을 복사하지 않습니다.
 
 소비자에 관리 파일 로컬 수정이 있으면 자동 업데이트는 충돌로 중단됩니다. 통합 후에도 충돌이 자동으로 사라지지는 않습니다. 전체 충돌 목록과 원본 SHA·권한을 확인하고 별도 백업한 뒤, 해당 파일 덮어쓰기 승인을 받은 유지보수 구간에서만 기존 `--force` 설치를 사용합니다. 추가 충돌이나 동시 작업이 있으면 덮어쓰지 않습니다. 과거 정리 보관 영역은 설치 전후 바이트·권한 보존 및 JSON 읽기를 별도로 확인합니다. 격리 테스트 통과는 운영 소비자 설치나 릴리스 완료를 뜻하지 않습니다.
+
+
+### 단일 승인 V0: 실행 전 정적 준비 확인
+
+`python3 scripts/omc_autopilot.py --target <source> check-work-contract --instruction <승인 원문> --work-contract <계약> --workspace-parent <실행 부모>`는 모델·baseline·승인 소비·clone·run 생성 없이 검사합니다. READY_STATIC(종료0)은 정적 조건만 통과했다는 뜻이며 실행 권한이 아닙니다. BLOCKED는 계약/설정 충돌, UNVERIFIED는 해석 불가(각 종료1), 입출력 오류는 종료2입니다. 실제 실행도 승인 소비 전에 같은 검사를 다시 수행합니다.
+
+직접 pytest/py.test 또는 Python -m pytest argv를 지원합니다. 기본 설정 및 HEAD와 동일한 tracked 설정의 명시 -c를 읽습니다. 명시 cache_dir·--basetemp는 이미 외부 경로여도 충돌이며, 래퍼·응답파일·알 수 없는 옵션·저장소 밖/ignored/미추적 설정은 미확인으로 보류합니다. conftest/plugin은 준비 확인에서 실행하지 않습니다. Git 조회는 자식 프로세스에만 optional locks를 끕니다.
+
+V0 baseline·RED·수정 후 검사·독립 검수는 업무 폴더 밖 호출별 소유 runtime을 사용합니다. HOME/TMPDIR/XDG_CACHE_HOME, bytecode 금지와 부모 PYTEST_ADDOPTS의 cache_dir/basetemp를 주입하며 승인 argv와 cacheprovider 선택은 유지합니다. 기존 업무 캐시를 삭제하거나 snapshot에서 포괄 제외하지 않습니다. 해당 업무 폴더와 해당 runtime만 쓰기 허용하며 종료·실패·timeout에 scratch를 정리합니다. 부모 보고 플러그인은 테스트 수집 전에 실효 경로를 확인합니다. 동적 plugin의 설정 단계 전체 부작용을 사전 증명하지는 않으며 기존 snapshot·oracle 검사는 유지합니다.
+
+macOS는 실제 sandbox 검증, Linux는 bwrap 구성 회귀를 구분해 기록합니다. 정적 준비 통과·통제된 provider 대역의 전체 경로 통과는 실제 모델 실행 성공이나 성능 개선을 의미하지 않습니다.
+
+### 만료된 동일 작업의 읽기 세션에서 제한 재개
+
+`python3 scripts/omc_edit_resume.py --target <저장소> diagnose`는 만료·활성/만료 재개·부분 보관·확인 불가를 읽기 전용으로 구분합니다. 동결된 `sync-require`는 새 세션을 쓰기 전에 이 안내를 반환합니다.
+
+`propose-edit-resume --work-id <작업ID> --grant-id <새ID> --purpose <수정목적> --allowed-file <기존파일>`은 부모 명령의 하위 명령이며 `--allowed-file`을 반복할 수 있습니다. 이 호출은 소유 이력·코드·index와 정확한 수정 범위를 고정한 승인 제안을 반환하고 슬롯은 소비하지 않습니다. 에이전트는 제안을 사용자에게 설명하고 실제 명시 승인 이후에만 `approval_reference`를 기록해 기존 `approve-edit-resume --file <제안JSON>`에 전달합니다. 사용자가 내부 JSON을 직접 조립할 필요는 없습니다.
+
+현재 confirmed 역할이 analysis/code_review여도 같은 work ID·HEAD·보존 이력으로 연결되는 원래 implementation 소유자가 있으면 제한 재개 제안을 만들 수 있습니다. 승인 기준은 최신 읽기 세션이 아니라 검증된 구현 소유자의 기준을 사용합니다. 최신 세션이나 과거 승인·RED·원래 8시간 기한을 덮어쓰지 않습니다. 다른 작업·역할·변경된 제안·변경된 code/index/보호 기록은 거부합니다.
+
+발급된 단일 슬롯은 기존 30분 monotonic 수명을 유지합니다. 유효한 `OMC_EDIT_RESUME_CONTEXT`를 명시한 task만 가드에 진입하며 `sync-require`는 implementation·senior_coding·continue·같은 work ID를 요구하고 원본 세션을 만들지 않습니다. grant는 일반 명령·커밋·출하 권한이 아닙니다. 재개 세대에서 새 CONTRACT·실제 RED·수정 후 검증을 수행해야 하며 과거 passed를 복사하지 않습니다. 기존 슬롯의 자동 재발급이나 만료 작업의 자동 보관도 하지 않습니다.
+
+독립 격리 fixture의 검증과 원본 저장소의 실제 grant 발급·반영은 구분합니다. 원본 반영과 기존 스테이징 보존은 별도 승인 범위와 전후 해시 검증이 필요합니다.
+
+
+### 만료 작업 분리 후 기존 스테이징을 보존하는 문서 커밋
+
+같은 work ID·HEAD·확인된 이력·승인 기준으로 연결된 analysis/code_review 세션은 명시적 `retire-expired-work`로 이전 미완료 작업을 보관할 수 있다. 이전 작업은 EXPIRED_UNFINISHED로 남으며 완료·승인으로 바꾸지 않는다. 활성 재개 슬롯과 다른 작업은 거부한다.
+
+보관 후 새 문서 작업은 `omc_guard.py sync-require --target . --mode autopilot --title document-commit --request "승인된 문서 변경" --roles directive --document-path docs/<기존문서> --for task`로 시작한다. `--document-path`를 반복해 기존 tracked docs/*.md·json·html 경로를 정확히 지정한다. 이 경로는 제품 구현 작업의 검증을 대체하지 않으며 기존 document_only 분류의 전역 dirty 검사를 완화하지 않는다.
+
+명령은 보호 대상 파일의 내용·권한, 원래 index 항목·플래그와 HEAD를 세션에 고정한다. 수정 후 `git commit --only -m "docs: ..." -- <승인 문서 경로>`로 문서만 커밋한다. 실제 훅에서 임시 commit index의 범위와 원래 index 보존을 각각 검사한다. 일반 git commit에 기존 스테이징이 섞이거나 보호 대상이 바뀌면 거부한다. ship·deploy 권한은 포함하지 않는다. 새 directive 문서 작업에는 구현 완료 pending을 만들지 않으므로 post-commit의 no_pending_completion은 정상 생략이다. 재개 grant 자체는 여전히 task만 허용한다.

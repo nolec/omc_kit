@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import hashlib
 import ast
+import shlex
 import json
 import os
 import platform
@@ -29,6 +30,20 @@ VERIFICATION_MAX_OUTPUT_BYTES = 1024 * 1024
 _PYTEST_REPORT_PREFIX = 'OMC_PYTEST_REPORT:'
 _PYTEST_REPORTER = '''import json
 _reports = []
+import os
+from pathlib import Path
+import pytest
+@pytest.hookimpl(tryfirst=True)
+def pytest_sessionstart(session):
+    runtime = os.environ.get('OMC_PYTEST_RUNTIME')
+    if runtime:
+        root = Path(runtime).resolve()
+        paths = [Path(session.config.option.basetemp).resolve()]
+        if session.config.pluginmanager.hasplugin('cacheprovider'):
+            paths.append((session.config.rootpath / session.config.getini('cache_dir')).resolve())
+        if any(root not in path.parents for path in paths):
+            pytest.exit('OMC_PYTEST_PATH_CONFLICT', returncode=4)
+        print('OMC_PYTEST_PATHS:' + json.dumps([str(path) for path in paths]))
 def pytest_runtest_logreport(report):
     _reports.append({'nodeid': report.nodeid, 'when': report.when, 'outcome': report.outcome})
 def pytest_terminal_summary(terminalreporter):
@@ -39,6 +54,176 @@ def pytest_terminal_summary(terminalreporter):
 def _is_pytest_command(argv: list[str]) -> bool:
     return (Path(argv[0]).name in {'pytest', 'py.test'}
             or any(argv[i:i + 2] == ['-m', 'pytest'] for i in range(len(argv) - 1)))
+
+
+def _readonly_git(root: Path, *args: str) -> subprocess.CompletedProcess:
+    return subprocess.run(['git', '--no-optional-locks', *args], cwd=root,
+                          capture_output=True, text=True, check=True)
+
+
+def _readonly_source_identity(root: Path) -> dict[str, str]:
+    status = _readonly_git(root, 'status', '--porcelain=v1', '--untracked-files=all').stdout
+    return dict(schema_version='omc-autopilot-source-identity/v1',
+                head=_readonly_git(root,'rev-parse','HEAD').stdout.strip(),
+                tree=_readonly_git(root,'rev-parse','HEAD^{tree}').stdout.strip(),
+                status_sha256=_sha256_text(status), clean=str(not bool(status.strip())).lower())
+
+
+def check_pytest_preparation(root: Path, commands: list[list[str]]) -> dict[str, Any]:
+    """Read configuration without importing project conftest or plugins."""
+    root = root.resolve()
+    configs = []
+    def result(status, reason, **extra):
+        return dict(status=status, reason_code=reason, configs=configs, **extra)
+    parse_errors = (ValueError, TypeError, IndexError, ImportError, subprocess.SubprocessError)
+    try:
+        from _pytest.config.exceptions import UsageError
+        parse_errors += (UsageError,)
+        from _pytest.config.findpaths import (
+            get_common_ancestor, get_dirs_from_args, locate_config,
+            load_config_dict_from_file,
+        )
+        for argv in commands:
+            start = 1 if argv and Path(argv[0]).name in {'pytest', 'py.test'} else 3
+            if start == 3 and not (len(argv) >= 3 and re.fullmatch(r'python(?:[0-9.]+)?', Path(argv[0]).name)
+                                   and argv[1:3] == ['-m', 'pytest']):
+                # -B is an interpreter flag, not a pytest option.
+                if len(argv) >= 4 and re.fullmatch(r'python(?:[0-9.]+)?', Path(argv[0]).name) and argv[1:4] == ['-B', '-m', 'pytest']:
+                    start = 4
+                else:
+                    return result('UNVERIFIED', 'verification_command_unsupported')
+            args = argv[start:]
+            explicit = None; positions = []; i = 0
+            value_options = {'-k', '-m', '-p', '--tb', '--maxfail', '--deselect', '--ignore', '--ignore-glob', '--import-mode', '--color', '--capture', '--durations', '--verbosity'}
+            flags = {'-q', '-qq', '-v', '-vv', '-s', '-x', '--disable-warnings', '--strict-markers', '--strict-config', '--collect-only', '--lf', '--ff'}
+            while i < len(args):
+                arg = args[i]
+                if arg.startswith('@'):
+                    return result('UNVERIFIED', 'pytest_response_file')
+                if arg in {'-c', '--config-file'} or arg.startswith('--config-file='):
+                    if '=' in arg: explicit = arg.split('=', 1)[1]
+                    else: i += 1; explicit = args[i]
+                elif arg == '-o' or arg == '--override-ini' or arg.startswith(('-o', '--override-ini=')):
+                    value = arg.split('=',1)[1] if arg.startswith('--override-ini=') else arg[2:]
+                    if not value: i += 1; value=args[i]
+                    key=value.split('=',1)[0].strip()
+                    if key == 'cache_dir': return result('BLOCKED','pytest_path_conflict', origin='argv', value=value)
+                    if key == 'addopts': return result('UNVERIFIED','pytest_addopts_override')
+                    return result('UNVERIFIED','pytest_override_unsupported')
+                elif arg == '--basetemp' or arg.startswith('--basetemp='):
+                    return result('BLOCKED','pytest_path_conflict',origin='argv',value=arg)
+                elif arg in value_options: i += 1; _ = args[i]
+                elif arg in flags: pass
+                elif arg.startswith('-'):
+                    if not any(arg.startswith(option+'=') for option in value_options if option.startswith('--')):
+                        return result('UNVERIFIED','pytest_option_unsupported',value=arg)
+                else: positions.append(arg.split('::',1)[0])
+                i += 1
+            if explicit:
+                candidate=Path(explicit); candidate=candidate if candidate.is_absolute() else root/candidate
+            else:
+                # Match determine_setup without changing the parent's cwd or
+                # constructing a Config (which can import project plugins).
+                dirs = get_dirs_from_args([str(root / value) for value in positions]) or [root]
+                ancestor = get_common_ancestor(dirs)
+                selected_root, candidate, _ = locate_config([ancestor])
+                if selected_root is None:
+                    has_setup = any((path / 'setup.py').is_file()
+                                    for path in (ancestor, *ancestor.parents))
+                    if not has_setup and dirs != [ancestor]:
+                        _, candidate, _ = locate_config(dirs)
+            if candidate is None: continue
+            candidate=Path(candidate)
+            if any(x.is_symlink() for x in (candidate,*candidate.parents)):
+                return result('UNVERIFIED','pytest_config_untrusted')
+            candidate=candidate.resolve()
+            if root not in candidate.parents: return result('UNVERIFIED','pytest_config_outside')
+            relative=candidate.relative_to(root).as_posix()
+            ignored=subprocess.run(['git','--no-optional-locks','check-ignore','--no-index','-q','--',relative],cwd=root).returncode
+            if ignored == 0: return result('UNVERIFIED','pytest_config_ignored')
+            try:
+                original=subprocess.run(['git','--no-optional-locks','show','HEAD:'+relative],
+                                        cwd=root,capture_output=True,check=True).stdout
+            except subprocess.CalledProcessError: return result('UNVERIFIED','pytest_config_untracked')
+            raw=candidate.read_bytes()
+            if original != raw: return result('BLOCKED','pytest_config_changed',origin=relative)
+            config=load_config_dict_from_file(candidate)
+            if config is None:
+                if candidate.name == 'pyproject.toml': config = {}
+                else: return result('UNVERIFIED','pytest_config_unreadable')
+            configs.append(dict(path=relative,sha256=hashlib.sha256(raw).hexdigest()))
+            addopts=config.get('addopts', '')
+            options=shlex.split(addopts) if isinstance(addopts,str) else list(addopts)
+            if 'cache_dir' in config or any(x == '--basetemp' or x.startswith('--basetemp=') or 'cache_dir' in x for x in options):
+                return result('BLOCKED','pytest_path_conflict',origin=relative,value=config)
+            if any(x.startswith('@') or x in {'-c','--config-file','--rootdir','-o','--override-ini'} or x.startswith(('--config-file=','--rootdir=','--override-ini=')) for x in options):
+                return result('UNVERIFIED','pytest_config_addopts_unsupported',origin=relative)
+            j = 0
+            while j < len(options):
+                option = options[j]
+                if option in value_options:
+                    j += 1
+                    if j >= len(options): return result('UNVERIFIED','pytest_config_addopts_unsupported',origin=relative)
+                elif option not in flags and not any(option.startswith(name+'=') for name in value_options if name.startswith('--')):
+                    return result('UNVERIFIED','pytest_config_addopts_unsupported',origin=relative,value=option)
+                j += 1
+
+        return result('READY_STATIC',None)
+    except parse_errors as exc:
+        return result('UNVERIFIED','pytest_config_unresolved',detail=str(exc))
+
+
+def check_work_contract(source: Path, contract_path: Path, instruction: str, workspace_parent: Path) -> dict[str, Any]:
+    """No approval consumption, clone, runtime creation, or repository writes."""
+    source=source.resolve()
+    def fail(reason): return dict(status='BLOCKED',reason_code=reason)
+    try:
+        contract=workspace.load_work_contract(contract_path)
+        if _sha256_text(instruction) != contract['instruction_sha256']: return fail('instruction_identity_mismatch')
+        preparation = check_pytest_preparation(source, contract['verification_commands'])
+        if preparation['status'] != 'READY_STATIC': return preparation
+        if _readonly_git(source,'rev-parse','HEAD').stdout.strip() != contract['base_commit']: return fail('source_identity_drift')
+        identity=contract['source_identity']
+        if _readonly_source_identity(source) != identity: return fail('source_identity_drift')
+        packet=mission.load_mission_packet(contract_path.parent/contract['mission_packet_path'])
+        if packet['packet_sha256'] != contract['mission_packet_sha256']: return fail('mission_packet_contract_mismatch')
+        if packet['schema_version'] != mission.SINGLE_APPROVAL_SCHEMA_VERSION:
+            return dict(status='UNVERIFIED',reason_code='single_approval_mission_required')
+        receipt_path=contract_path.parent/contract['mission_approval_path']
+        if receipt_path.is_symlink(): return fail('mission_approval_symlink')
+        raw=receipt_path.read_bytes()
+        if hashlib.sha256(raw).hexdigest()!=contract['mission_approval_sha256']: return fail('mission_approval_contract_mismatch')
+        receipt=json.loads(raw)
+        mission.validate_mission_approval_receipt(receipt,packet=packet,session_id=contract['mission_approval_session_id'])
+        policy=packet['execution']
+        if packet['request_sha256']!=contract['instruction_sha256'] or packet['base_commit']!=contract['base_commit']: return fail('mission_identity_mismatch')
+        if (contract['promotion_policy']!='isolated_candidate_only' or contract['pipeline_mode']!='lite'
+            or contract['change_class']!='implementation' or contract['test_policy']!='required'
+            or contract['allowed_operations']!=['modify'] or contract['allowed_paths']!=policy['allowed_paths']
+            or contract['verification_commands']!=policy['verification_commands']): return fail('single_approval_scope_mismatch')
+        if time.time()>=policy['approval_expires_epoch']: return fail('single_approval_expired')
+        parent=workspace_parent.absolute()
+        if any(x.is_symlink() for x in (parent,*parent.parents)): return fail('workspace_parent_symlink')
+        if parent == source or source in parent.parents: return fail('workspace_parent_inside_source')
+        if (parent/contract['run_id']).exists(): return fail('single_approval_already_started')
+        common=Path(_readonly_git(source,'rev-parse','--git-common-dir').stdout.strip())
+        common=common if common.is_absolute() else source/common
+        key=_sha256_text(json.dumps({'session_id':contract['mission_approval_session_id'],'decision_id':receipt['decision_id']},sort_keys=True))
+        claims=common/'omc-single-approval-claims'
+        if claims.is_symlink(): return fail('approval_claims_untrusted')
+        if (claims/(key+'.json')).exists(): return fail('single_approval_already_consumed')
+        verifier=Path(policy['verifier_path'])
+        if any(x.is_symlink() for x in (verifier,*verifier.parents)): return fail('independent_verifier_symlink')
+        if source in verifier.resolve().parents or parent.resolve() in verifier.resolve().parents: return fail('independent_verifier_inside_workspace')
+        if hashlib.sha256(verifier.read_bytes()).hexdigest()!=policy['verifier_sha256']: return fail('independent_verifier_mismatch')
+        for relative in policy['allowed_paths']:
+            path=source/relative
+            if not path.is_file() or any(x.is_symlink() for x in (path,*path.parents)): return fail('single_approval_existing_file_required')
+        return check_pytest_preparation(source,policy['verification_commands'])
+    except OSError as exc:
+        return dict(status='ERROR',reason_code='preparation_io_error',detail=str(exc))
+    except (ValueError,KeyError,TypeError,workspace.AutopilotWorkspaceError,mission.MissionError,subprocess.SubprocessError) as exc:
+        return fail(str(exc))
 
 
 def _pytest_report(output: str) -> list[dict[str, str]] | None:
@@ -125,7 +310,7 @@ def _review_prompt(packet: dict[str, Any], briefing: dict[str, Any] | None = Non
     )
 
 
-def _confined_verification_command(root: Path, argv: list[str]) -> list[str]:
+def _confined_verification_command(root: Path, argv: list[str], runtime: Path | None = None) -> list[str]:
     root = root.resolve()
     system = platform.system()
     if system == "Darwin":
@@ -135,12 +320,14 @@ def _confined_verification_command(root: Path, argv: list[str]) -> list[str]:
                 "verification_confinement_unavailable"
             )
         root_literal = json.dumps(str(root))
+        runtime_rule = f"(allow file-write* (subpath {json.dumps(str(runtime.resolve()))}))" if runtime else ""
         profile = "\n".join(
             (
                 "(version 1)",
                 "(allow default)",
                 "(deny network*)",
                 "(deny file-write*)",
+                runtime_rule,
                 f"(allow file-write* (subpath {root_literal}) (literal \"/dev/null\"))",
             )
         )
@@ -163,6 +350,7 @@ def _confined_verification_command(root: Path, argv: list[str]) -> list[str]:
             "--bind",
             root_text,
             root_text,
+            *(["--bind", str(runtime.resolve()), str(runtime.resolve())] if runtime else []),
             "--chdir",
             root_text,
             "--proc",
@@ -187,6 +375,7 @@ def _verification_environment(runtime_root: Path) -> dict[str, str]:
         "TMPDIR": str(temporary),
         "XDG_CACHE_HOME": str(cache),
         "CI": "true",
+        "PYTHONDONTWRITEBYTECODE": "1",
     }
     for name in ("LANG", "LC_ALL", "LC_CTYPE", "TERM", "SYSTEMROOT"):
         if name in os.environ:
@@ -315,10 +504,11 @@ def _run_verification(
     max_output_bytes: int = VERIFICATION_MAX_OUTPUT_BYTES,
     capture_output: bool = False,
     pytest_plugin: Path | None = None,
+    external_runtime: bool = False,
 ) -> tuple[list[dict[str, Any]], str | None]:
     receipts: list[dict[str, Any]] = []
-    runtime_parent, runtime_error = _prepare_verification_runtime(root)
-    if runtime_error or runtime_parent is None:
+    runtime_parent, runtime_error = (None, None) if external_runtime else _prepare_verification_runtime(root)
+    if runtime_error or (runtime_parent is None and not external_runtime):
         return receipts, runtime_error or "verification_runtime_unavailable"
     for argv in commands:
         remaining = deadline_monotonic - time.monotonic()
@@ -333,7 +523,7 @@ def _run_verification(
             )
             return receipts, "verification_timeout"
         try:
-            command = _confined_verification_command(root, argv)
+            command = _confined_verification_command(root, argv) if not external_runtime else argv
         except workspace.AutopilotWorkspaceError:
             receipts.append(
                 {
@@ -349,6 +539,20 @@ def _run_verification(
         ) as raw_runtime:
             runtime_root = Path(raw_runtime)
             environment = _verification_environment(runtime_root)
+            if external_runtime:
+                metadata = runtime_root.lstat()
+                if (runtime_root.is_symlink() or metadata.st_uid != os.getuid()
+                        or stat.S_IMODE(metadata.st_mode) != 0o700
+                        or root.resolve() in runtime_root.resolve().parents):
+                    return receipts, 'verification_runtime_untrusted'
+                try:
+                    command = _confined_verification_command(root, argv, runtime_root)
+                except workspace.AutopilotWorkspaceError:
+                    return receipts, 'verification_confinement_unavailable'
+                if _is_pytest_command(argv):
+                    environment['PYTEST_ADDOPTS'] = shlex.join(['-o', 'cache_dir='+str(runtime_root/'cache/pytest'), '--basetemp='+str(runtime_root/'tmp/pytest')])
+                    environment['OMC_PYTEST_RUNTIME'] = str(runtime_root)
+
             report_required = pytest_plugin is not None and _is_pytest_command(argv)
             if report_required:
                 environment.update(PYTEST_PLUGINS=pytest_plugin.stem,
@@ -384,6 +588,8 @@ def _run_verification(
                     }
                 )
                 return receipts, "verification_start_failed"
+            if external_runtime:
+                _kill_process_group(process)
             if not terminated:
                 receipts.append(
                     {
@@ -404,6 +610,7 @@ def _run_verification(
                     "exit_code": None,
                     "output_sha256": _sha256_text(stdout + stderr),
                     "timed_out": True,
+                    **({"runtime_root": str(runtime_root)} if external_runtime else {}),
                 }
             )
             return receipts, "verification_timeout"
@@ -421,15 +628,23 @@ def _run_verification(
             {
                 "argv": argv,
                 "exit_code": process.returncode,
+                **({"runtime_root": str(runtime_root), "injected_environment": environment} if external_runtime else {}),
                 "output_sha256": _sha256_text(output),
                 **({'output': output} if capture_output else {}),
             }
         )
         if report_required:
+            if 'OMC_PYTEST_PATH_CONFLICT' in output:
+                return receipts, 'pytest_effective_path_conflict'
             rows = _pytest_report(stdout)
             if rows is None:
                 return receipts, 'pytest_report_missing_or_invalid'
             receipts[-1]['pytest_report'] = rows
+            paths = [line.partition(':')[2] for line in stdout.splitlines() if line.startswith('OMC_PYTEST_PATHS:')]
+            if external_runtime:
+                if len(paths) != 1:
+                    return receipts, 'pytest_effective_paths_missing'
+                receipts[-1]['effective_paths'] = json.loads(paths[0])
             if process.returncode not in {0, 1}:
                 return receipts, 'pytest_execution_failed'
         if process.returncode != 0:
@@ -698,7 +913,7 @@ def _run_single_approval(
             if hashlib.sha256(pytest_plugin.read_bytes()).hexdigest() != reporter_sha256:
                 raise workspace.AutopilotWorkspaceError('pytest_reporter_changed')
             checks, error = _run_verification(root, commands,
-                deadline_monotonic=execute_until, capture_output=True, pytest_plugin=pytest_plugin)
+                deadline_monotonic=execute_until, capture_output=True, pytest_plugin=pytest_plugin, external_runtime=True)
             if hashlib.sha256(pytest_plugin.read_bytes()).hexdigest() != reporter_sha256:
                 raise workspace.AutopilotWorkspaceError('pytest_reporter_changed')
             return checks, error
@@ -870,7 +1085,7 @@ def _run_single_approval(
             inspection_git = workspace.snapshot_git_control_plane(inspect_root)
             oracle_checks, oracle_error = _run_verification(inspect_root,
                 [[sys.executable, '-B', str(oracle), str(inspect_root)]],
-                deadline_monotonic=execute_until, capture_output=True)
+                deadline_monotonic=execute_until, capture_output=True, external_runtime=True)
             oracle_original()
             if oracle.read_bytes() != verifier_bytes:
                 return finish('blocked', 'independent_verifier_mismatch')
@@ -932,7 +1147,7 @@ def _run_single_approval(
                                                candidate_commit=candidate, expected_delta=delta)
             if gate._code_snapshot_digest(isolated) != snapshot:
                 return finish('blocked', 'candidate_commit_mismatch')
-            if workspace.source_identity(source) != contract['source_identity']:
+            if _readonly_source_identity(source) != contract['source_identity']:
                 return finish('blocked', 'source_identity_drift')
             if time.monotonic() >= deadline:
                 return finish('blocked', 'single_approval_deadline_exceeded')
@@ -1002,9 +1217,12 @@ def run_safe_pipeline(
             return finish("blocked", "mission_request_identity_mismatch")
         if mission_packet["base_commit"] != contract["base_commit"]:
             return finish("blocked", "mission_base_commit_mismatch")
-    if workspace.source_identity(source) != contract["source_identity"]:
+    if _readonly_source_identity(source) != contract["source_identity"]:
         return finish("blocked", "source_identity_drift")
     if mission_packet is not None and mission_packet['schema_version'] == mission.SINGLE_APPROVAL_SCHEMA_VERSION:
+        preparation = check_work_contract(source, contract_path, instruction, workspace_parent)
+        if preparation['status'] != 'READY_STATIC':
+            return finish('blocked', preparation['reason_code'], preparation=preparation)
         return _run_single_approval(
             source=source, contract=contract, packet=mission_packet,
             approval=mission_receipt, instruction=instruction,

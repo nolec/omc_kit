@@ -6418,6 +6418,11 @@ def main() -> int:
         help="Phase A frozen work contract를 사용해 격리·범위 제한 pipeline 실행",
     )
 
+    p_check_contract = sub.add_parser('check-work-contract', help='모델 실행 없는 읽기 전용 V0 준비 확인')
+    p_check_contract.add_argument('--instruction', required=True)
+    p_check_contract.add_argument('--work-contract', type=Path, required=True)
+    p_check_contract.add_argument('--workspace-parent', type=Path, required=True)
+
     p_freeze_contract = sub.add_parser(
         "freeze-work-contract",
         help="현재 clean commit과 승인된 Autopilot 작업 범위를 불변 contract로 동결",
@@ -6516,6 +6521,16 @@ def main() -> int:
         )
     if args.cmd == "status":
         return cmd_status(root, args.task_id)
+    if args.cmd == 'check-work-contract':
+        result = autopilot_safe.check_work_contract(root, args.work_contract, args.instruction, args.workspace_parent)
+        result.update(explanation={'READY_STATIC': '정적 준비 확인 통과. 실행 승인은 별도입니다.',
+            'BLOCKED': '계약 또는 경로 설정 충돌로 실행을 보류합니다.',
+            'UNVERIFIED': '정적으로 확인할 수 없어 실행을 보류합니다.',
+            'ERROR': '준비 확인 중 입출력 오류가 발생했습니다.'}[result['status']],
+            target=str(root), environment_policy='호출별 외부 HOME/TMPDIR/XDG_CACHE_HOME 및 pytest 경로',
+            unexecuted=['모델', 'baseline', '승인 소비', 'clone', 'run 생성'])
+        print(json.dumps(result, ensure_ascii=False, sort_keys=True))
+        return 0 if result['status']=='READY_STATIC' else 2 if result['status']=='ERROR' else 1
     if args.cmd == "freeze-work-contract":
         verification_commands: list[list[str]] = []
         try:

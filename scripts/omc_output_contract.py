@@ -479,12 +479,96 @@ def _work_identity(root, sid):
     return pending_work or session_work or sid
 
 
+def _observation_binding(root):
+    """Read-only custody for reports; never grants execution or completion."""
+    import math
+    import stat
+    import subprocess
+    from omc_edit_resume import RETIREMENT_PENDING, slot_path
+    root = Path(root).resolve()
+    marker = root / RETIREMENT_PENDING
+    if marker.exists() or marker.is_symlink():
+        raise OutputContractError('observation_retirement_pending')
+    names = ['.omc/state/latest.json', '.omc/state/pending-completion.json',
+             '.omc/pipeline_session.json']
+    latest, pending, pipeline = [_identity_object(root, name) for name in names]
+    sid = latest.get('latest_confirmed_session_id')
+    owner = pipeline.get('owner_session_id') or pipeline.get('session_id')
+    work = pipeline.get('owner_work_id')
+    members = pending.get('session_ids')
+    if (not isinstance(members, list) or not members
+            or any(not isinstance(member,str) or not re.fullmatch('[A-Za-z0-9_-]{1,120}',member)
+                   for member in members)
+            or len(set(members)) != len(members)):
+        raise OutputContractError('observation_work_binding_invalid')
+    if (not all(isinstance(v, str) and re.fullmatch('[A-Za-z0-9_-]{1,120}',v)
+                for v in (sid, owner, work))
+            or latest.get('latest_session_id') != sid or pending.get('work_id') != work
+            or owner not in members):
+        raise OutputContractError('observation_work_binding_invalid')
+    for member in set((sid, owner)):
+        name = f'.omc/state/sessions/{member}/session.json'
+        session = _identity_object(root, name)
+        confirmation = session.get('confirmation')
+        if (session.get('work_id') != work or not isinstance(confirmation, dict)
+                or confirmation.get('status') != 'confirmed'):
+            raise OutputContractError('observation_session_binding_invalid')
+        names.append(name)
+    slot = slot_path(root, work)
+    if slot.exists() or slot.is_symlink():
+        grant = _identity_object(root, slot)
+        binding = grant.get('binding')
+        if (not isinstance(binding, dict) or binding.get('work_id') != work
+                or binding.get('root') != str(root)
+                or not isinstance(grant.get('grant_id'),str) or not grant['grant_id']
+                or not isinstance(grant.get('boot'),str) or not grant['boot']
+                or any(isinstance(grant.get(k),bool) or not isinstance(grant.get(k),(int,float))
+                       or not math.isfinite(grant[k]) for k in ('t0','deadline'))
+                or not 0 <= grant['t0'] < grant['deadline'] <= grant['t0'] + 1800):
+            raise OutputContractError('observation_slot_invalid')
+        generation = grant.get('generation')
+        if (not isinstance(generation,str) or not generation.startswith('.omc/edit-resumptions/generations/')
+                or Path(generation).is_absolute() or '..' in Path(generation).parts):
+            raise OutputContractError('observation_slot_invalid')
+        _identity_object(root, str(Path(generation)/'pipeline.json'))
+        names.extend([str(slot.relative_to(root)),str(Path(generation)/'pipeline.json')])
+    else:
+        started = pipeline.get('started_at')
+        if (isinstance(started,bool) or not isinstance(started,(int,float))
+                or not math.isfinite(started) or started <= 0 or time.time()-started <= 28800):
+            raise OutputContractError('observation_not_expired')
+    pins = {name: {'sha256':_sha(_local_file(root,name).read_bytes()),
+                   'mode':stat.S_IMODE(_local_file(root,name).stat().st_mode)} for name in names}
+    git_identity = None
+    if (root/'.git').exists():
+        # Shared/external Git metadata needs a separate custody contract.
+        if (root/'.git').is_symlink() or not (root/'.git').is_dir():
+            raise OutputContractError('observation_git_unsupported')
+        try:
+            head = subprocess.run(['git','--no-optional-locks','rev-parse','HEAD'],cwd=root,
+                                  check=True,capture_output=True,text=True).stdout.strip()
+        except subprocess.SubprocessError as exc:
+            raise OutputContractError('observation_git_unreadable') from exc
+        index = root/'.git/index'
+        git_identity = {'head': head, 'index_sha256': _sha(_local_file(root,index).read_bytes())}
+    return {'repository':str(root),'work_id':work,'session_id':sid,
+            'governance':pins,'git':git_identity, 'candidate':_current_binding(root)}
+
+
 def _context(root, value, *, live_deadline=True):
     root=Path(root).resolve()
     if not isinstance(value,dict) or value.get('output_mode')!='detached_v1':
         raise OutputContractError('detached_mode_required')
     from omc_edit_resume import frozen, load
-    if frozen(root):
+    kind = value.get('context_kind')
+    if kind == 'observation_only':
+        if value.get('stage') not in {'plan','critique-plan'}:
+            raise OutputContractError('observation_stage_forbidden')
+        if value.get('observation_binding') != _observation_binding(root):
+            raise OutputContractError('observation_binding_changed')
+    elif kind is not None:
+        raise OutputContractError('unsupported_context_kind')
+    elif frozen(root):
         resume = load(root)
         if value.get('edit_resume') != {'grant_id': resume['grant_id'], 'generation': resume['generation']}:
             raise OutputContractError('resume_output_generation_mismatch')
@@ -518,6 +602,8 @@ def load_output_context(root, path, pin, *, live_deadline=True):
 
 def record_path(root, context):
     from omc_edit_resume import frozen, load
+    if context.get('context_kind') == 'observation_only':
+        return Path(root).resolve()/'.omc/state/output-observations'/context['work_id']/context['report_id']/'manifest.json'
     if frozen(root):
         return Path(root).resolve()/load(root)['generation']/'output-records'/context['report_id']/'manifest.json'
     return Path(root).resolve()/'.omc/state/output-records'/context['work_id']/context['report_id']/'manifest.json'
@@ -633,6 +719,8 @@ def preflight_record(root, context_path, context_pin, raw):
 def _publish(root, context_path, context_pin, raw, *, source_kind, authority=None, gate_verification=None):
     root=Path(root).resolve()
     context, parsed, display = preflight_record(root, context_path, context_pin, raw)
+    if context.get('context_kind') == 'observation_only' and source_kind != 'model_declared':
+        raise OutputContractError('observation_issuer_forbidden')
     if source_kind not in {'model_declared','legacy_normalized','completion_gate'}:
         raise OutputContractError('record_source_kind_invalid')
     if source_kind=='completion_gate' and authority is not _GATE_AUTHORITY:
@@ -674,6 +762,8 @@ def read_record(root, path, pin, expected_context, *, display=None):
     if not isinstance(value,dict):raise OutputContractError('record_manifest_object_required')
     if value.get('schema_version')!=RECORD_SCHEMA or value.get('context')!=context or value.get('publication')!='published':
         raise OutputContractError('record_context_mismatch')
+    if context.get('context_kind') == 'observation_only' and value.get('source_kind') != 'model_declared':
+        raise OutputContractError('observation_issuer_forbidden')
     if value.get('source_kind') not in {'completion_gate','model_declared','legacy_normalized'}:
         raise OutputContractError('record_source_kind_invalid')
     if value.get('binding')!=_current_binding(root):raise OutputContractError('record_live_binding_mismatch')
@@ -950,15 +1040,27 @@ def output_cli(argv=None):
                 context['draft_binding'] = _current_binding(root)
             from omc_edit_resume import frozen, load
             if frozen(root):
-                resume=load(root);context['edit_resume']={'grant_id':resume['grant_id'],'generation':resume['generation']}
+                if args.stage in {'plan','critique-plan'}:
+                    context.update(context_kind='observation_only',observation_binding=_observation_binding(root))
+                else:
+                    try: resume=load(root)
+                    except (OSError,ValueError,KeyError,TypeError) as exc:
+                        raise OutputContractError('resume_context_required') from exc
+                    context['edit_resume']={'grant_id':resume['grant_id'],'generation':resume['generation']}
             _context(root,context)
             file=record_path(root,context).parent.parent/(context['report_id']+'.context.json')
             _local_file(root,file,must_exist=False);file.parent.mkdir(parents=True,exist_ok=True)
             data=_json_bytes(context);_write_record_file(file,data)
             print(json.dumps({'output_context':str(file),'output_context_sha256':_sha(data),
                               'record_path':str(record_path(root,context))},ensure_ascii=False));return 0
-        except (OSError,ValueError,KeyError,TypeError):
-            print('출력 기록의 새 실행 문맥을 고정하지 못했습니다.',file=sys.stderr);return 2
+        except (OSError,ValueError,KeyError,TypeError) as exc:
+            code = str(exc) if isinstance(exc,OutputContractError) and re.fullmatch('[a-z][a-z0-9_]{1,100}',str(exc)) else _failure_code(exc,'prepare')
+            print('출력 기록의 새 실행 문맥을 고정하지 못했습니다.',file=sys.stderr)
+            print('reason_code: '+code,file=sys.stderr)
+            print('다음 행동: 기존 작업과 초안을 보존하고 원인에 맞는 진단 또는 명시적 재개 절차를 확인하세요.',file=sys.stderr)
+            if args.reference:
+                print('초안 참조: '+json.dumps([str(p) for p in args.reference],ensure_ascii=False),file=sys.stderr)
+            return 2
     if args.command == 'validate':
         try:
             raw = _read_pinned(args.target, args.source_file, args.source_sha256).decode('utf-8')

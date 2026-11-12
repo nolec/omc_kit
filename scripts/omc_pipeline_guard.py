@@ -282,7 +282,12 @@ def cmd_check(root: Path, file_path: str, bypass: bool = False) -> int:
     if latest and (normalized.suffix in _IMPL_EXTENSIONS):
         from omc_native_red_evidence import policy
         try:
-            pin = policy(root) if state.get('basis_sha256') or _basis_path(root, latest).exists() else None
+            from omc_edit_resume import ENV as resume_env, load as load_resume
+            resumed = bool(os.environ.get(resume_env))
+            if resumed:
+                latest = load_resume(root)['binding']['session_id']
+            basis = _load_approved_basis(root,latest) if resumed else None
+            pin = policy(root,basis=basis) if state.get('basis_sha256') or _basis_path(root, latest).exists() else None
             tier1 = _is_impl_file(file_path) or _is_test_file(file_path) or pin is not None
             if tier1 and (not state.get('contract_confirmed') or state.get('session_id') != latest):
                 print('[PIPELINE] 현재 세션 CONTRACT가 필요합니다')
@@ -867,6 +872,9 @@ def cmd_verification_template(root: Path) -> int:
         sid = latest.get("latest_confirmed_session_id")
         if latest.get("latest_session_id", sid) != sid:
             raise ValueError("현재 작업 승인을 먼저 확인하세요")
+        from omc_edit_resume import ENV, load
+        if os.environ.get(ENV):
+            sid = load(root)['binding']['session_id']
         basis = _load_approved_basis(root, sid)
         snapshot = _code_snapshot_digest(root)
         record = {"session_id": sid, "basis_sha256": _basis_digest(basis),
@@ -922,6 +930,12 @@ def _legacy_contract_done(root: Path, content: str = "", required_checks: str = 
                 state["session_id"] = sid
         except Exception:
             pass
+
+    # A bounded resume keeps the implementation owner even when the current
+    # confirmed session is a read-only reviewer. The grant validates both.
+    from omc_edit_resume import ENV as resume_env, load as load_resume
+    if os.environ.get(resume_env):
+        state['session_id'] = load_resume(root)['binding']['session_id']
 
     try:
         directory = _basis_path(root, state.get("session_id"))

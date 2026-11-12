@@ -51,7 +51,7 @@ ROOT = SCRIPT.parents[1]
 def call(root, script, *args, env=None, input=None, sample=('fixture-boot',1000.0)):
     # Test-only injected clock in a separate CLI process; production exposes no clock flag/env.
     program = "import sys,runpy;sys.path.insert(0," + repr(str(ROOT/'scripts')) + ");import omc_edit_resume as r;r.clock=lambda:" + repr(sample) + ";sys.argv=sys.argv[1:];import importlib,pathlib;m=importlib.import_module(pathlib.Path(sys.argv[0]).stem);raise SystemExit(m.main() if hasattr(m,'main') else m.output_cli())"
-    options = [args[0], '--target', str(root), *args[1:]] if script == 'omc_output_contract.py' else ['--target', str(root), *args]
+    options = [args[0], '--target', str(root), *args[1:]] if script in {'omc_output_contract.py','omc_guard.py'} else ['--target', str(root), *args]
     return subprocess.run([sys.executable, '-c', program, str(ROOT / 'scripts' / script), *options],
                           capture_output=True, text=True, env=env, input=input, timeout=30)
 
@@ -1122,3 +1122,249 @@ def test_committed_retirement_interruption_resumes(retiring, monkeypatch, point)
     result = _retire(root, session)
     assert result['previous_work_status'] == 'EXPIRED_COMMITTED'
     assert not resume.frozen(root)
+
+
+def _reader_for_expired_fixture(root, roles=('code_review',)):
+    old=resume.original(root);active=dict(old);active['started_at']=time.time()
+    (root/'.omc/pipeline_session.json').write_text(json.dumps(active))
+    reader=omc_state.record_session(root,mode='autopilot',title='review',request='same work review',
+        role_ids=list(roles),confirmed=True,completion_action='preserve-if-present')
+    (root/'.omc/pipeline_session.json').write_text(json.dumps(old))
+    return reader
+
+
+def _public_resume_proposal(root):
+    pending=resume.read(root,'.omc/state/pending-completion.json')
+    return call(root,'omc_edit_resume.py','propose-edit-resume','--work-id',pending['work_id'],
+        '--grant-id','reader-grant','--purpose','approved fixture correction',
+        '--allowed-file','app.py','--allowed-file','test_app.py')
+
+
+@pytest.mark.parametrize('role',['code_review','analysis'])
+def test_t1_reader_handoff_preserves_lifecycle_and_enforces_new_gate(expired,role):
+    root,request=expired;reader=_reader_for_expired_fixture(root,(role,))
+    original={p:p.read_bytes() for p in (root/'.omc').rglob('*.json')}
+    idx=(root/'.git/index').read_bytes()
+    proposed=_public_resume_proposal(root)
+    assert proposed.returncode==0,proposed.stdout+proposed.stderr
+    proposal=json.loads(proposed.stdout)
+    assert proposal['binding']['requesting_session_id']==reader['session_id']
+    assert proposal['binding']['session_id']==resume.read(root,'.omc/state/pending-completion.json')['session_id']
+    data=proposal['request'];assert data['approval_reference']==''
+    request.write_text(json.dumps(data));missing=call(root,'omc_edit_resume.py','approve-edit-resume','--file',str(request))
+    assert missing.returncode==1 and 'explicit_approval_required' in missing.stdout
+    data['approval_reference']='explicit current fixture approval';request.write_text(json.dumps(data))
+    # request.json is a caller proposal, not a historical approval record.
+    original.pop(request,None)
+    granted=call(root,'omc_edit_resume.py','approve-edit-resume','--file',str(request))
+    assert granted.returncode==0,granted.stdout+granted.stderr
+    env=dict(os.environ,**{resume.ENV:granted.stdout.strip()})
+    guarded=call(root,'omc_guard.py','sync-require','--mode','autopilot','--title','repair',
+        '--request','same repair','--roles','senior_coding','--work-class','implementation',
+        '--completion-action','continue','--work-id',resume.work(root),'--for','task',env=env)
+    assert guarded.returncode==0,guarded.stdout+guarded.stderr
+    forbidden=call(root,'omc_guard.py','require','--for','git commit',env=env)
+    assert forbidden.returncode!=0
+    blocked=call(root,'omc_pipeline_guard.py','check-edit','app.py',env=env)
+    assert blocked.returncode==1 and 'new_contract_required' in blocked.stdout
+    contract=call(root,'omc_pipeline_guard.py','contract-done','--required-checks','tests',env=env)
+    assert contract.returncode==0,contract.stdout+contract.stderr
+    blocked=call(root,'omc_pipeline_guard.py','check-edit','app.py',env=env)
+    assert blocked.returncode==1 and 'new_red_required' in blocked.stdout
+    assert all(p.read_bytes()==raw for p,raw in original.items())
+    assert (root/'.git/index').read_bytes()==idx
+    repeat=call(root,'omc_edit_resume.py','approve-edit-resume','--file',str(request))
+    assert repeat.returncode==1
+
+
+@pytest.mark.parametrize('defect',['different_work','changed_latest','changed_code','changed_index','bad_role','changed_scope','changed_purpose'])
+def test_t1_reader_proposal_binding_cannot_drift(expired,defect):
+    root,request=expired;reader=_reader_for_expired_fixture(root)
+    proposed=_public_resume_proposal(root);assert proposed.returncode==0,proposed.stdout
+    data=json.loads(proposed.stdout)['request'];data['approval_reference']='explicit fixture approval'
+    if defect=='changed_scope':data['allowed_files']=['app.py']
+    elif defect=='changed_purpose':data['purpose']='different repair'
+    elif defect=='changed_code':(root/'app.py').write_text('value=3\n')
+    elif defect=='changed_index':subprocess.run(['git','add','app.py'],cwd=root,check=True)
+    elif defect=='changed_latest':
+        path=root/'.omc/state/latest.json';doc=json.loads(path.read_text());doc['note']='changed';path.write_text(json.dumps(doc))
+    else:
+        path=root/f".omc/state/sessions/{reader['session_id']}/session.json";doc=json.loads(path.read_text())
+        doc['work_id' if defect=='different_work' else 'role_ids']='other' if defect=='different_work' else ['directive'];path.write_text(json.dumps(doc))
+    request.write_text(json.dumps(data));result=call(root,'omc_edit_resume.py','approve-edit-resume','--file',str(request))
+    assert result.returncode==1,result.stdout
+    assert not list((root/'.omc/edit-resumptions/slots').glob('*.json'))
+
+
+def test_t1_guard_diagnoses_before_frozen_session_write(expired):
+    root,_=expired;_reader_for_expired_fixture(root)
+    before={p:p.read_bytes() for p in (root/'.omc').rglob('*.json')}
+    result=call(root,'omc_guard.py','sync-require','--mode','autopilot','--title','repair','--request','same task repair',
+        '--roles','senior_coding','--work-class','implementation','--completion-action','continue',
+        '--work-id',resume.work(root),'--for','task')
+    assert result.returncode!=0
+    assert 'propose-edit-resume' in result.stdout and 'Traceback' not in result.stderr
+    assert all(p.read_bytes()==raw for p,raw in before.items())
+
+
+@pytest.mark.parametrize('role',['analysis','code_review'])
+def test_t1_reader_full_red_green_and_completion(expired,monkeypatch,role):
+    root,request=expired;_reader_for_expired_fixture(root,(role,))
+    proposed=_public_resume_proposal(root);assert proposed.returncode==0,proposed.stdout
+    data=json.loads(proposed.stdout)['request'];data['approval_reference']='explicit fixture approval'
+    request.write_text(json.dumps(data))
+    test_generation_full_cli_red_green_completion(expired,monkeypatch)
+
+
+_LINEAGE_SHAPE_CASES = [
+    (member,field,bad)
+    for member in ('owner','historical')
+    for field,bad in [('confirmation',None),('confirmation','confirmed'),('confirmation',[]),
+                      ('role_ids',None),('role_ids','senior_coding'),('role_ids',['senior_coding',{}]),
+                      ('git',None),('git','HEAD'),('git',[])]
+] + [('pending','session_ids',bad) for bad in (None,'owner',[None])]
+
+
+@pytest.mark.parametrize('phase',['before','after'])
+@pytest.mark.parametrize('member,field,bad',_LINEAGE_SHAPE_CASES)
+def test_t1_lineage_shapes_fail_closed_on_both_guard_surfaces(lineage_expired,phase,member,field,bad):
+    root,request=lineage_expired;_reader_for_expired_fixture(root)
+    pending=resume.read(root,'.omc/state/pending-completion.json')
+    proposed=_public_resume_proposal(root);assert proposed.returncode==0,proposed.stdout
+    data=json.loads(proposed.stdout)['request'];data['approval_reference']='explicit fixture approval'
+    request.write_text(json.dumps(data));env=dict(os.environ)
+    if phase=='after':
+        granted=call(root,'omc_edit_resume.py','approve-edit-resume','--file',str(request))
+        assert granted.returncode==0,granted.stdout
+        env[resume.ENV]=granted.stdout.strip()
+    if member=='pending':path=root/'.omc/state/pending-completion.json'
+    else:
+        sid=pending['session_id'] if member=='owner' else pending['root_session_id']
+        path=root/f'.omc/state/sessions/{sid}/session.json'
+    record=json.loads(path.read_text());record[field]=bad;path.write_text(json.dumps(record))
+    protected={p:p.read_bytes() for p in (root/'.omc').rglob('*.json')}
+    index_before=(root/'.git/index').read_bytes()
+    code_before=(root/'app.py').read_bytes()
+    expected='pending_lineage_invalid' if member=='pending' else 'owner_lineage_invalid'
+    for args in [('require','--for','task'),
+                 ('sync-require','--mode','autopilot','--title','repair','--request','repair',
+                  '--roles','senior_coding','--work-class','implementation','--completion-action','continue',
+                  '--work-id',pending['work_id'],'--for','task')]:
+        result=call(root,'omc_guard.py',*args,env=env)
+        assert result.returncode==6,result.stdout+result.stderr
+        assert expected in result.stdout,result.stdout
+        assert 'Traceback' not in result.stdout+result.stderr
+    if phase=='before':
+        refused=call(root,'omc_edit_resume.py','approve-edit-resume','--file',str(request))
+        assert refused.returncode==1 and expected in refused.stdout,refused.stdout+refused.stderr
+        assert 'Traceback' not in refused.stderr
+    assert set((root/'.omc').rglob('*.json'))==set(protected)
+    assert all(p.read_bytes()==raw for p,raw in protected.items())
+    assert (root/'.git/index').read_bytes()==index_before
+    assert (root/'app.py').read_bytes()==code_before
+
+
+@pytest.fixture
+def lineage_expired(tmp_path,monkeypatch):
+    """Small consumer repo for the shape matrix; full kit coverage remains above."""
+    monkeypatch.setattr(resume,'clock',lambda:('fixture-boot',1000.0))
+    root=tmp_path/'consumer';root.mkdir()
+    subprocess.run(['git','init','-q'],cwd=root,check=True)
+    (root/'docs').mkdir();(root/'docs/status.md').write_text('old\n')
+    (root/'app.py').write_text('value = 1\n')
+    (root/'test_app.py').write_text('from app import value\ndef test_value(): assert value == 2\n')
+    subprocess.run(['git','add','.'],cwd=root,check=True)
+    subprocess.run(['git','-c','user.name=Fixture','-c','user.email=fixture@localhost','commit','-qm','base'],cwd=root,check=True,capture_output=True)
+    omc_state.init_state(root)
+    first=omc_state.record_session(root,mode='autopilot',title='fixture',request='initial consumer work',
+        role_ids=['senior_coding'],confirmed=True,work_class='implementation',completion_action='start')
+    owner=omc_state.record_session(root,mode='autopilot',title='fixture',request='consumer repair',
+        role_ids=['senior_coding'],confirmed=True,work_class='implementation',completion_action='continue',work_id=first['work_id'])
+    checks={'session_id':owner['session_id'],'revision':1,'request':'consumer repair',
+        'approval_reference':'explicit fixture approval','checks':[{'id':'tests','target':'app.py',
+        'method':'pytest test_app.py','pass_condition':'pass','target_version':'fixture'}]}
+    path=root/'.omc/checks.json';path.write_text(json.dumps(checks));assert guard.cmd_approve_checks(root,path)==0
+    state=resume.original(root);state['started_at']=time.time()-28900
+    (root/'.omc/pipeline_session.json').write_text(json.dumps(state))
+    return root,root/'.omc/request.json'
+
+
+@pytest.mark.parametrize('field,bad',[('binding',None),('allowed_files','app.py'),
+    ('inventory',[]),('index',{}),('generation',None),('t0','yesterday'),
+    ('grant_id',None),('approval_reference',''),('purpose',[]),('schema_version',False)])
+def test_t1_malformed_slot_has_narrow_guard_rejection(lineage_expired,field,bad):
+    root,request=lineage_expired;_reader_for_expired_fixture(root)
+    proposed=_public_resume_proposal(root);assert proposed.returncode==0,proposed.stdout
+    data=json.loads(proposed.stdout)['request'];data['approval_reference']='explicit fixture approval';request.write_text(json.dumps(data))
+    granted=call(root,'omc_edit_resume.py','approve-edit-resume','--file',str(request));assert granted.returncode==0,granted.stdout
+    ref=json.loads(granted.stdout);slot=Path(ref['path']);value=json.loads(slot.read_text());value[field]=bad;slot.write_text(json.dumps(value))
+    ref['sha256']=resume.digest(slot.read_bytes());env=dict(os.environ,**{resume.ENV:json.dumps(ref)})
+    result=call(root,'omc_guard.py','require','--for','task',env=env)
+    assert result.returncode==6 and 'resume_slot_invalid' in result.stdout,result.stdout+result.stderr
+    assert 'Traceback' not in result.stderr
+
+
+@pytest.mark.parametrize('role',['analysis','code_review'])
+@pytest.mark.parametrize('defect',['none','code','index','flag','scope','ship','missing_scope'])
+def test_t2_reader_retirement_and_preserved_document_commit(lineage_expired,role,defect):
+    root,_=lineage_expired
+    doc=root/'docs/status.md'
+    (root/'.gitignore').write_text('__pycache__/\n')
+    if defect=='none':
+        import shutil
+        shutil.copytree(ROOT/'scripts',root/'scripts',ignore=shutil.ignore_patterns('__pycache__'))
+    _reader_for_expired_fixture(root,(role,))
+    (root/'app.py').write_text('value = 3\n')
+    subprocess.run(['git','add','app.py'],cwd=root,check=True)
+    subprocess.run(['git','update-index','--assume-unchanged','app.py'],cwd=root,check=True)
+    subprocess.run(['git','update-index','--skip-worktree','test_app.py'],cwd=root,check=True)
+    flags=resume.git(root,'ls-files','-v','--','app.py','test_app.py')
+    preserved=resume.git(root,'ls-files','--stage','--','app.py')
+    work=resume.work(root)
+    retired=call(root,'omc_edit_resume.py','retire-expired-work','--work-id',work,'--approval-reference','explicit fixture separation')
+    assert retired.returncode==0,retired.stdout+retired.stderr
+    assert json.loads(retired.stdout)['previous_work_status']=='EXPIRED_UNFINISHED'
+    started=call(root,'omc_guard.py','sync-require','--mode','autopilot','--title','document-commit',
+        '--request','approved document only commit','--roles','directive','--document-path','docs/status.md','--for','task')
+    assert started.returncode==0,started.stdout+started.stderr
+    import shutil
+    if defect!='none':
+        if defect=='code':(root/'app.py').write_text('value = 4\n')
+        elif defect=='index':subprocess.run(['git','reset','-q','HEAD','--','app.py'],cwd=root,check=True)
+        elif defect=='flag':subprocess.run(['git','update-index','--no-assume-unchanged','app.py'],cwd=root,check=True)
+        elif defect=='missing_scope':
+            sid=json.loads((root/'.omc/state/latest.json').read_text())['latest_session_id']
+            (root/'.omc/state/sessions'/sid/'document-scope.json').unlink()
+        guarded=call(root,'omc_guard.py','require','--for','ship' if defect=='ship' else 'git commit')
+        assert guarded.returncode==6,guarded.stdout+guarded.stderr
+        assert 'Traceback' not in guarded.stderr
+        return
+    # Install the production hook templates without replacing their contents.
+    for name in ('pre-commit','post-commit'):
+        path=root/'.git/hooks'/name;shutil.copy2(ROOT/'templates'/name,path);path.chmod(0o755)
+    doc.write_text('new\n')
+    committed=subprocess.run(['git','-c','user.name=Fixture','-c','user.email=fixture@localhost','commit','--only','-m','docs: update status','--','docs/status.md'],cwd=root,capture_output=True,text=True)
+    assert committed.returncode==0,committed.stdout+committed.stderr
+    assert 'invalid' not in committed.stdout+committed.stderr
+    assert resume.git(root,'diff-tree','--no-commit-id','--name-only','-r','HEAD').decode().strip()=='docs/status.md'
+    assert resume.git(root,'ls-files','--stage','--','app.py')==preserved
+    assert (root/'app.py').read_text()=='value = 3\n'
+    assert resume.git(root,'ls-files','-v','--','app.py','test_app.py')==flags
+
+
+@pytest.mark.parametrize('defect',['work','head','role','confirmation','live'])
+def test_t2_reader_retirement_rejects_unbound_observer(lineage_expired,defect):
+    root,_=lineage_expired;reader=_reader_for_expired_fixture(root)
+    work=resume.work(root);p=root/'.omc/state/sessions'/reader['session_id']/'session.json'
+    value=json.loads(p.read_text())
+    if defect=='work':value['work_id']='other'
+    elif defect=='head':value['git']['head']='other'
+    elif defect=='role':value['role_ids']=['directive']
+    elif defect=='confirmation':value['confirmation']=None
+    else:
+        q=root/'.omc/pipeline_session.json';old=json.loads(q.read_text());old['started_at']=time.time();q.write_text(json.dumps(old))
+    p.write_text(json.dumps(value));before={p:p.read_bytes() for p in (root/'.omc').rglob('*.json')}
+    result=call(root,'omc_edit_resume.py','retire-expired-work','--work-id',work,'--approval-reference','explicit fixture approval')
+    assert result.returncode==1 and 'Traceback' not in result.stderr
+    assert set((root/'.omc').rglob('*.json'))==set(before)
+    assert all(p.read_bytes()==raw for p,raw in before.items())

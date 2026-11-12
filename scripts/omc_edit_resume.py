@@ -71,11 +71,14 @@ def local(root, name, *, exists=True):
 
 
 def read(root, name):
-    return json.loads(local(root, name).read_bytes())
+    value = json.loads(local(root, name).read_bytes())
+    if not isinstance(value, dict):
+        raise ValueError('record_object_required')
+    return value
 
 
 def git(root, *args):
-    return subprocess.check_output(['git', *args], cwd=root)
+    return subprocess.check_output(['git', '--no-optional-locks', *args], cwd=root)
 
 
 def original(root):
@@ -224,9 +227,14 @@ def retire_expired_work(root, work_id, *, approval_reference):
                     evidence_paths = [f'.omc/state/sessions/{owner}/session.json',
                                       f'.omc/state/sessions/{owner}/completion.json']
                 previous_work_status = 'EXPIRED_COMMITTED'
+            reader_owner = False
+            if pending_path.exists() and latest.get('latest_confirmed_session_id') != owner:
+                binding = ownership(root)
+                reader_owner = (binding.get('requesting_session_id') == latest.get('latest_session_id')
+                                and binding['session_id'] == owner and binding['work_id'] == work_id)
             if (not valid_owner or state.get('owner_work_id') != work_id
-                    or latest.get('latest_session_id') != owner
-                    or latest.get('latest_confirmed_session_id') != owner):
+                    or (not reader_owner and (latest.get('latest_session_id') != owner
+                        or latest.get('latest_confirmed_session_id') != owner))):
                 raise ValueError('retirement_owner_mismatch')
             if not time.time() - state.get('started_at', time.time()) > 28800:
                 raise ValueError('retirement_requires_expired_work')
@@ -404,39 +412,90 @@ def index(root, allowed):
     return [line for line in lines if line.split('\t', 1)[-1] not in allowed]
 
 
+def _session_identifier(value):
+    return (isinstance(value,str) and 0 < len(value) <= 120
+            and value not in ('.','..') and all(c.isascii() and (c.isalnum() or c in '_-') for c in value))
+
+
+def _session_shape(entry):
+    if not isinstance(entry,dict):
+        return False
+    confirmation, roles, git_info = (entry.get('confirmation'),entry.get('role_ids'),entry.get('git'))
+    return (isinstance(confirmation,dict) and isinstance(confirmation.get('status'),str)
+            and isinstance(roles,list) and bool(roles)
+            and all(isinstance(role,str) and bool(role.strip()) for role in roles)
+            and isinstance(git_info,dict) and isinstance(git_info.get('head'),str)
+            and bool(git_info['head']))
+
+
 def ownership(root, *, require_expired=True):
     root = Path(root).resolve()
     latest = read(root, '.omc/state/latest.json')
     sid = latest['latest_confirmed_session_id']
-    if latest['latest_session_id'] != sid:
+    if not _session_identifier(sid) or latest.get('latest_session_id') != sid:
         raise ValueError('session_unconfirmed')
-    session = read(root, f'.omc/state/sessions/{sid}/session.json')
+    requesting_sid = sid
+    requester = read(root, f'.omc/state/sessions/{sid}/session.json')
     pending = read(root, '.omc/state/pending-completion.json')
     old = original(root)
-    if (session.get('confirmation', {}).get('status') != 'confirmed'
+    roles = requester.get('role_ids')
+    confirmation = requester.get('confirmation')
+    if not _session_shape(requester) or confirmation.get('status') != 'confirmed':
+        raise ValueError('requesting_session_invalid')
+    reader = set(roles).issubset({'analysis','code_review'})
+    members = pending.get('session_ids')
+    if (not isinstance(members,list) or not members
+            or any(not _session_identifier(member) for member in members)
+            or len(set(members)) != len(members)):
+        raise ValueError('pending_lineage_invalid')
+    entries = {}
+    for member in members:
+        try:
+            entry = read(root, f'.omc/state/sessions/{member}/session.json')
+        except (OSError,ValueError,TypeError) as exc:
+            raise ValueError('owner_lineage_invalid') from exc
+        if not _session_shape(entry):
+            raise ValueError('owner_lineage_invalid')
+        entries[member] = entry
+    if reader:
+        if requester.get('work_id') != pending.get('work_id'):
+            raise ValueError('requesting_work_mismatch')
+        sid = pending.get('session_id')
+        if not _session_identifier(sid) or sid not in entries:
+            raise ValueError('implementation_owner_invalid')
+        session = entries[sid]
+    else:
+        session = requester
+    confirmation = session.get('confirmation')
+    started = old.get('started_at')
+    if isinstance(started,bool) or not isinstance(started,(int,float)) or not math.isfinite(started):
+        raise ValueError('expired_work_owner_binding_invalid')
+    if (not isinstance(confirmation,dict) or confirmation.get('status') != 'confirmed'
             or session.get('completion_action') != 'continue'
             or 'senior_coding' not in session.get('role_ids', [])
             or session.get('work_class') != 'implementation'
             or pending.get('work_class') != 'implementation'
             or session.get('work_id') != pending.get('work_id')
             or old.get('owner_work_id') != pending.get('work_id')
-            or old.get('session_id') not in pending.get('session_ids', [])
-            or (require_expired and not time.time() - old.get('started_at', time.time()) > 28800)):
+            or old.get('session_id') not in members
+            or (require_expired and not time.time() - started > 28800)):
         raise ValueError('expired_work_owner_binding_invalid')
     head = git(root, 'rev-parse', 'HEAD').decode().strip()
+    if reader and (not isinstance(requester.get('git'),dict) or requester['git'].get('head') != head):
+        raise ValueError('requesting_head_mismatch')
     from omc_state import _pending_completion_matches_session
     if not _pending_completion_matches_session(root, pending, current_head=head):
         raise ValueError('pending_lineage_invalid')
     files = ['.omc/pipeline_session.json', '.omc/state/latest.json', '.omc/state/pending-completion.json']
     for i, member in enumerate(pending['session_ids']):
         name = f'.omc/state/sessions/{member}/session.json'
-        entry = read(root, name)
+        entry = entries[member]
         if (entry.get('work_id') != pending['work_id'] or entry.get('lineage_index') != i
                 or entry.get('lineage_root_session_id') != pending['root_session_id']
                 or entry.get('lineage_previous_session_id') != (pending['session_ids'][i-1] if i else None)
-                or entry.get('confirmation', {}).get('status') != 'confirmed'
-                or 'senior_coding' not in entry.get('role_ids', [])
-                or entry.get('git', {}).get('head') != head):
+                or entry['confirmation']['status'] != 'confirmed'
+                or 'senior_coding' not in entry['role_ids']
+                or entry['git']['head'] != head):
             raise ValueError('owner_lineage_invalid')
         files.append(name)
     folder = root / '.omc/verification-bases' / sid
@@ -484,9 +543,18 @@ def ownership(root, *, require_expired=True):
             files.extend(references)
             queue.extend(references)
     pins = {name: digest(local(root, name).read_bytes()) for name in sorted(set(files))}
-    return {'root': str(root), 'git_dir': str(Path(git(root, 'rev-parse', '--absolute-git-dir').decode().strip()).resolve()),
-            'head': head, 'work_id': pending['work_id'], 'root_session': pending['root_session_id'],
-            'session_id': sid, 'protected': pins, 'checks': [c['id'] for c in basis['checks']]}
+    result = {'root': str(root), 'git_dir': str(Path(git(root, 'rev-parse', '--absolute-git-dir').decode().strip()).resolve()),
+              'head': head, 'work_id': pending['work_id'], 'root_session': pending['root_session_id'],
+              'session_id': sid, 'protected': pins, 'checks': [c['id'] for c in basis['checks']]}
+    if reader:
+        result['requesting_session_id'] = requesting_sid
+    return result
+
+
+def _proposal_sha256(request):
+    keys = ('grant_id','purpose','allowed_files','required_checks',
+            'expected_binding_sha256','expected_code_sha256','expected_index_sha256')
+    return digest(json.dumps({key:request.get(key) for key in keys},sort_keys=True).encode())
 
 
 def _require_approved_snapshot(root, request, binding):
@@ -520,6 +588,9 @@ def issue(root, proposal):
         if name not in names:
             raise ValueError('ignored_scope_unsupported')
     binding = ownership(root)
+    if ('requesting_session_id' in binding or 'expected_proposal_sha256' in request):
+        if request.get('expected_proposal_sha256') != _proposal_sha256(request):
+            raise ValueError('approval_proposal_changed')
     if request.get('required_checks') != binding['checks']:
         raise ValueError('approval_checks_mismatch')
     _require_approved_snapshot(root, request, binding)
@@ -563,13 +634,27 @@ def issue(root, proposal):
 def _loaded_context(root, *, durable=True):
     """Keep the work lock through validation and the caller's bounded file commit."""
     ref = json.loads(os.environ.get(ENV, 'null'))
-    if not isinstance(ref, dict) or set(ref) != {'path', 'sha256'}:
+    if (not isinstance(ref, dict) or set(ref) != {'path', 'sha256'}
+            or not isinstance(ref.get('path'),str) or not isinstance(ref.get('sha256'),str)):
         raise ValueError('explicit_resume_context_required')
     p = local(root, ref['path'])
     raw = p.read_bytes()
     if digest(raw) != ref['sha256']:
         raise ValueError('resume_context_sha_mismatch')
     value = json.loads(raw)
+    if (not isinstance(value,dict)
+            or type(value.get('schema_version')) is not int or value['schema_version'] != 1
+            or any(not isinstance(value.get(key),str) or not value[key].strip()
+                   for key in ('grant_id','approval_reference','purpose'))
+            or not isinstance(value.get('binding'),dict)
+            or not _session_identifier(value['binding'].get('work_id'))
+            or not isinstance(value.get('allowed_files'),list) or not value['allowed_files']
+            or any(not isinstance(name,str) or not name for name in value['allowed_files'])
+            or not isinstance(value.get('inventory'),dict) or not isinstance(value.get('index'),list)
+            or not isinstance(value.get('generation'),str) or not isinstance(value.get('boot'),str)
+            or any(isinstance(value.get(key),bool) or not isinstance(value.get(key),(int,float))
+                   or not math.isfinite(value[key]) for key in ('t0','deadline'))):
+        raise ValueError('resume_slot_invalid')
     if p != slot_path(Path(root).resolve(), value['binding']['work_id']):
         raise ValueError('wrong_work_slot')
     # The issuer holds the same lock through publication and directory fsync.
@@ -599,6 +684,64 @@ def load(root, *, durable=True):
 def pipeline_path(root):
     value = load(root)
     return local(root, Path(value['generation']) / 'pipeline.json')
+
+
+def propose(root, work_id, *, grant_id, purpose, allowed_files):
+    """Describe an approval snapshot without reserving a slot or changing state."""
+    root = Path(root).resolve()
+    binding = ownership(root)
+    if binding['work_id'] != work_id:
+        raise ValueError('proposal_work_mismatch')
+    if not isinstance(grant_id,str) or not grant_id.strip() or not isinstance(purpose,str) or not purpose.strip():
+        raise ValueError('proposal_identity_required')
+    if not allowed_files or len(set(allowed_files)) != len(allowed_files):
+        raise ValueError('exact_existing_scope_required')
+    names = set(git(root,'ls-files','-co','--exclude-standard','-z').decode().split('\0'))
+    for name in allowed_files:
+        if (not isinstance(name,str) or Path(name).is_absolute() or str(Path(name)) != name
+                or name.startswith(('.omc/','.git/')) or name not in names):
+            raise ValueError('invalid_scope')
+        local(root,name)
+    slot = local(root,slot_path(root,work_id),exists=False)
+    if slot.exists():
+        raise ValueError('work_slot_already_consumed')
+    request = {'grant_id':grant_id,'purpose':purpose,'allowed_files':allowed_files,
+               'required_checks':binding['checks'],'approval_reference':'',
+               'expected_binding_sha256':digest(json.dumps(binding,sort_keys=True).encode()),
+               'expected_code_sha256':digest(json.dumps(inventory(root,[]),sort_keys=True).encode()),
+               'expected_index_sha256':digest(git(root,'ls-files','--stage'))}
+    request['expected_proposal_sha256'] = _proposal_sha256(request)
+    _require_approved_snapshot(root,request,binding)
+    return {'binding':binding,'request':request,'activated':False,'approval_required':True}
+
+
+def diagnose(root):
+    """Read-only classification; never repairs an expired lifecycle."""
+    root = Path(root).resolve()
+    marker = root/RETIREMENT_PENDING
+    if marker.exists() or marker.is_symlink():
+        return {'state':'retirement_pending','reason_code':'retirement_pending','action':'preserve_and_inspect'}
+    try:
+        state=original(root)
+        pending=read(root,'.omc/state/pending-completion.json')
+        work_id=pending.get('work_id')
+        if not isinstance(work_id,str) or not work_id:
+            raise ValueError('work_identity_invalid')
+        slot=local(root,slot_path(root,work_id),exists=False)
+        if slot.exists():
+            value=read(root,slot);boot,now=clock()
+            active=boot==value['boot'] and value['t0'] <= now < value['deadline']
+            return {'state':'resume_active' if active else 'resume_expired','work_id':work_id,
+                    'reason_code':'explicit_resume_context_required' if active else 'resume_expired_or_clock_changed',
+                    'action':'inspect-edit-resume' if active else 'preserve_and_inspect'}
+        binding=ownership(root)
+        return {'state':'expired','work_id':work_id,'reason_code':'explicit_resume_approval_required',
+                'owner_session_id':binding['session_id'],
+                'requesting_session_id':binding.get('requesting_session_id',binding['session_id']),
+                'action':'propose-edit-resume'}
+    except (OSError,ValueError,KeyError,TypeError,AttributeError) as exc:
+        return {'state':'unverified','reason_code':str(exc) if isinstance(exc,ValueError) else 'governance_unreadable',
+                'action':'preserve_and_inspect'}
 
 
 def inspect(root, work_id):
@@ -818,6 +961,10 @@ def main():
     sub = parser.add_subparsers(dest='cmd', required=True)
     sub.add_parser('capabilities')
     p = sub.add_parser('approve-edit-resume'); p.add_argument('--file', type=Path, required=True)
+    sub.add_parser('diagnose')
+    p = sub.add_parser('propose-edit-resume'); p.add_argument('--work-id',required=True)
+    p.add_argument('--grant-id',required=True); p.add_argument('--purpose',required=True)
+    p.add_argument('--allowed-file',action='append',required=True)
     p = sub.add_parser('inspect-edit-resume'); p.add_argument('--work-id', required=True)
     p = sub.add_parser('retire-expired-work', help='Archive expired unfinished work before an independent new work.')
     p.add_argument('--work-id', required=True)
@@ -829,6 +976,10 @@ def main():
     try:
         if args.cmd == 'capabilities':
             print(json.dumps({'single_slot_per_work': True, 'ttl_seconds': TTL, 'response_delivery_required': False}))
+        elif args.cmd == 'diagnose':
+            print(json.dumps(diagnose(args.target.resolve())))
+        elif args.cmd == 'propose-edit-resume':
+            print(json.dumps(propose(args.target,args.work_id,grant_id=args.grant_id,purpose=args.purpose,allowed_files=args.allowed_file)))
         elif args.cmd == 'approve-edit-resume':
             print(json.dumps(issue(args.target, args.file)))
         elif args.cmd == 'inspect-edit-resume':

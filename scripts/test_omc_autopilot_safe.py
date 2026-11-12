@@ -1257,7 +1257,7 @@ def test_single_approval_rejects_unapproved_revision_budget(revisions):
         mission.validate_single_execution(policy)
 
 
-def _single_fixture(tmp_path, monkeypatch, instruction='fix value'):
+def _single_fixture(tmp_path, monkeypatch, instruction='fix value', default_cache=False, real_confinement=False, config_text=None, commands_override=None):
     source = tmp_path / 'single-source'
     source.mkdir()
     _git(source, 'init', '-q')
@@ -1265,11 +1265,17 @@ def _single_fixture(tmp_path, monkeypatch, instruction='fix value'):
     _git(source, 'config', 'user.email', 'fixture@localhost')
     (source / 'app.py').write_text('value = 1\n')
     (source / 'test_app.py').write_text('def test_baseline():\n    assert True\n')
+    if config_text is not None:
+        (source/'pytest.ini').write_text(config_text)
     _git(source, 'add', '.')
     _git(source, 'commit', '-qm', 'baseline')
     verifier = tmp_path / 'oracle.py'
     verifier.write_text("import pathlib,sys\nns={}\nexec((pathlib.Path(sys.argv[1])/'app.py').read_text(),ns)\nassert ns['value']==2\n")
     commands = [[sys.executable, '-B', '-m', 'pytest', '-p', 'no:cacheprovider', 'test_app.py', '-q']]
+    if default_cache:
+        commands = [[sys.executable, '-m', 'pytest', 'test_app.py', '-q']]
+    if commands_override is not None:
+        commands = commands_override
     policy = {'allowed_paths': ['app.py', 'test_app.py'], 'test_paths': ['test_app.py'],
               'verification_commands': commands, 'red_case_id': 'test_app.py::test_value',
               'max_time_sec': 60, 'max_revisions': 2, 'approval_expires_epoch': time.time()+600,
@@ -1289,7 +1295,8 @@ def _single_fixture(tmp_path, monkeypatch, instruction='fix value'):
         mission_approval_session_id='authorizing-session')
     final=tmp_path/'single-contract.json';workspace.freeze_work_contract(final,doc)
     # Unit tests exercise real child checks; OS confinement has separate tests.
-    monkeypatch.setattr(safe,'_confined_verification_command',lambda root,argv:argv)
+    if not real_confinement:
+        monkeypatch.setattr(safe,'_confined_verification_command',lambda root,argv,runtime=None:argv)
     return source,final
 
 
@@ -1624,3 +1631,185 @@ def test_public_cli_without_contract_retains_legacy_strip(tmp_path, monkeypatch)
         'pipeline', '--instruction', ' \n한글 value 수정 요청입니다\r\n '])
     assert autopilot.main() == 0
     assert observed == ['한글 value 수정 요청입니다']
+
+
+def test_v0_default_pytest_cache_is_external(tmp_path):
+    root = tmp_path / 'work'; root.mkdir()
+    (root / 'test_ok.py').write_text('def test_ok(): assert True\n')
+    checks, error = safe._run_verification(root, [[sys.executable, '-m', 'pytest', '-q']],
+        deadline_monotonic=time.monotonic()+20, capture_output=True, external_runtime=True)
+    assert error is None, checks
+    assert checks[0]['exit_code'] == 0, checks
+    assert not (root / '.pytest_cache').exists()
+    assert not (root / '__pycache__').exists()
+    assert not Path(checks[0]['runtime_root']).exists()
+
+
+@pytest.mark.parametrize('options,status', [([], 'READY_STATIC'),
+    (['-o', 'cache_dir=/tmp/cache'], 'BLOCKED'),
+    (['--basetemp=/tmp/test'], 'BLOCKED'), (['@args'], 'UNVERIFIED')])
+def test_v0_pytest_static_settings(tmp_path, options, status):
+    root=tmp_path/'source';root.mkdir()
+    _git(root,'init','-q');_git(root,'config','user.name','Fixture');_git(root,'config','user.email','fixture@localhost')
+    (root/'test_a.py').write_text('def test_a(): pass\n')
+    _git(root,'add','.');_git(root,'commit','-qm','base')
+    before=(root/'.git/index').read_bytes()
+    result=safe.check_pytest_preparation(root, [[sys.executable,'-m','pytest','-q',*options]])
+    assert result['status']==status, result
+    assert (root/'.git/index').read_bytes()==before
+
+
+def test_v0_pytest_config_conflict(tmp_path):
+    root=tmp_path/'source';root.mkdir()
+    _git(root,'init','-q');_git(root,'config','user.name','Fixture');_git(root,'config','user.email','fixture@localhost')
+    (root/'pytest.ini').write_text('[pytest]\naddopts = --basetemp=/tmp/unsafe\n')
+    _git(root,'add','.');_git(root,'commit','-qm','base')
+    result=safe.check_pytest_preparation(root, [[sys.executable,'-m','pytest']])
+    assert result['status']=='BLOCKED'
+    assert 'pytest.ini' in str(result)
+
+
+@pytest.mark.skipif(sys.platform != 'darwin', reason='macOS actual sandbox')
+def test_v0_default_cache_whole_pipeline_actual_sandbox(tmp_path, monkeypatch):
+    original = _single_fixture
+    monkeypatch.setitem(globals(), '_single_fixture', lambda *a, **kw: original(*a, **kw, default_cache=True, real_confinement=True))
+    test_single_approval_runs_real_checks_and_bounded_repairs(tmp_path, monkeypatch, 'normal')
+
+
+@pytest.mark.parametrize('mutation,expected', [('none','READY_STATIC'),('config','BLOCKED'),('wrapper','UNVERIFIED')])
+def test_v0_public_preparation_preserves_index_and_receipts(tmp_path, monkeypatch, capsys, mutation, expected):
+    source, contract = _single_fixture(tmp_path, monkeypatch)
+    if mutation == 'config':
+        (source/'pytest.ini').write_text('[pytest]\ncache_dir=/tmp/bad\n')
+        _git(source,'add','pytest.ini');_git(source,'commit','-qm','config')
+    if mutation == 'wrapper':
+        monkeypatch.setattr(safe,'check_pytest_preparation',lambda *a:dict(status='UNVERIFIED',reason_code='verification_command_unsupported'))
+    # Touching a tracked file makes git status eligible to refresh index stat data.
+    os.utime(source/'app.py',None)
+    before_index=(source/'.git/index').read_bytes()
+    before_files={p:p.read_bytes() for p in tmp_path.glob('*.json')}
+    monkeypatch.setattr(sys,'argv',['omc_autopilot.py','--target',str(source),'check-work-contract',
+        '--instruction','fix value','--work-contract',str(contract),'--workspace-parent',str(tmp_path/'runs')])
+    rc=autopilot.main()
+    result=json.loads(capsys.readouterr().out)
+    assert result['status']==expected,result
+    assert rc==(0 if expected=='READY_STATIC' else 1)
+    assert (source/'.git/index').read_bytes()==before_index
+    assert all(p.read_bytes()==raw for p,raw in before_files.items())
+    assert not (tmp_path/'runs').exists()
+    assert not (source/'.git/omc-single-approval-claims').exists()
+
+
+def test_v0_ready_then_config_change_blocks_before_consumption(tmp_path, monkeypatch):
+    source,contract=_single_fixture(tmp_path,monkeypatch)
+    parent=tmp_path/'runs'
+    assert safe.check_work_contract(source,contract,'fix value',parent)['status']=='READY_STATIC'
+    (source/'pytest.ini').write_text('[pytest]\ncache_dir=/tmp/bad\n')
+    calls=[]
+    result=safe.run_safe_pipeline(source=source,contract_path=contract,instruction='fix value',
+        task_runner=lambda *a:calls.append(a),review_runner=lambda *a:calls.append(a),workspace_parent=parent)
+    assert result['status']=='blocked',result
+    assert not calls and not parent.exists()
+    assert not (source/'.git/omc-single-approval-claims').exists()
+
+
+def test_v0_effective_dynamic_path_conflict_before_tests(tmp_path):
+    root=tmp_path/'work';root.mkdir()
+    (root/'conftest.py').write_text("def pytest_configure(config): config.option.basetemp='/tmp/not-owned'\n")
+    (root/'test_ok.py').write_text("def test_ok(): raise AssertionError('BODY_RAN')\n")
+    plugin=tmp_path/'probe.py';plugin.write_text(safe._PYTEST_REPORTER)
+    checks,error=safe._run_verification(root,[[sys.executable,'-m','pytest','-q']],
+        deadline_monotonic=time.monotonic()+20,pytest_plugin=plugin,external_runtime=True,capture_output=True)
+    assert error=='pytest_effective_path_conflict',checks
+    assert 'BODY_RAN' not in checks[0]['output']
+
+
+@pytest.mark.parametrize('ending',['success','failure','timeout'])
+def test_v0_external_scratch_cleanup_and_write_boundary(tmp_path,ending):
+    root=tmp_path/'work';root.mkdir()
+    protected=tmp_path/'oracle';protected.write_text('preserved')
+    script="import os,pathlib,time; print(os.environ['HOME'],flush=True); pathlib.Path(os.environ['HOME'],'ok').write_text('ok'); "
+    if ending=='failure': script+=f"pathlib.Path({str(protected)!r}).write_text('bad')"
+    elif ending=='timeout': script+='time.sleep(10)'
+    checks,error=safe._run_verification(root,[[sys.executable,'-c',script]],
+        deadline_monotonic=time.monotonic()+(0.8 if ending=='timeout' else 20),external_runtime=True,capture_output=True)
+    assert error=={'success':None,'failure':'verification_failed','timeout':'verification_timeout'}[ending],checks
+    assert protected.read_text()=='preserved'
+    assert not Path(checks[0]['runtime_root']).exists()
+    assert not (root/'.omc').exists()
+
+
+def test_v0_linux_runtime_bind_is_narrow(tmp_path,monkeypatch):
+    monkeypatch.setattr(safe.platform,'system',lambda:'Linux')
+    monkeypatch.setattr(safe.shutil,'which',lambda name:'/usr/bin/bwrap')
+    root=tmp_path/'work';runtime=tmp_path/'runtime'
+    argv=safe._confined_verification_command(root,['pytest'],runtime)
+    assert argv.count('--bind')==2
+    assert str(runtime.resolve()) in argv
+    assert ['--bind','/tmp','/tmp'] != argv
+
+
+@pytest.mark.parametrize('configuration,args,expected', [
+    ('[pytest]\n', ['-c','pytest.ini','-k','ok'], 'READY_STATIC'),
+    ('[pytest]\ncache_dir=/tmp/cache\n', [], 'BLOCKED'),
+    ('[pytest]\naddopts=-q\n', [], 'READY_STATIC'),
+    ('[pytest]\naddopts=--unknown-option\n', [], 'UNVERIFIED'),
+    ('[pytest]\r\n', ['-c','pytest.ini'], 'READY_STATIC'),
+])
+def test_v0_tracked_explicit_configuration(tmp_path,configuration,args,expected):
+    root=tmp_path/'source';root.mkdir()
+    _git(root,'init','-q');_git(root,'config','user.name','Fixture');_git(root,'config','user.email','fixture@localhost')
+    (root/'pytest.ini').write_text(configuration)
+    _git(root,'add','.');_git(root,'commit','-qm','base')
+    before=(root/'.git/index').read_bytes();os.utime(root/'pytest.ini',None)
+    result=safe.check_pytest_preparation(root,[[sys.executable,'-m','pytest',*args]])
+    assert result['status']==expected,result
+    assert (root/'.git/index').read_bytes()==before
+
+
+def test_v0_untracked_configuration_is_unverified(tmp_path):
+    root=_source(tmp_path)
+    (root/'pytest.ini').write_text('[pytest]\n')
+    assert safe.check_pytest_preparation(root,[['pytest']])['status']=='UNVERIFIED'
+
+
+@pytest.mark.parametrize('root_configuration,expected', [
+    ('[pytest]\naddopts=--basetemp=/tmp/explicit-conflict\n','BLOCKED'),
+    ('[pytest]\n','READY_STATIC'),
+])
+def test_review_multiple_paths_match_pytest_config(tmp_path,monkeypatch,root_configuration,expected):
+    from _pytest.config.findpaths import determine_setup
+    root=_source(tmp_path)
+    (root/'a').mkdir();(root/'b').mkdir()
+    (root/'pytest.ini').write_text(root_configuration)
+    (root/'a/pytest.ini').write_text('[pytest]\n')
+    for name in ['a/test_a.py','b/test_b.py']:
+        (root/name).write_text('def test_ok(): pass\n')
+    _git(root,'add','.');_git(root,'commit','-qm','config fixture')
+    index_before=(root/'.git/index').read_bytes()
+    monkeypatch.chdir(root)
+    arguments=['a/test_a.py','b/test_b.py']
+    actual=determine_setup(None,arguments)[1]
+    result=safe.check_pytest_preparation(root,[[sys.executable,'-m','pytest',*arguments]])
+    assert actual==root/'pytest.ini'
+    assert result['status']==expected,result
+    assert result['configs'][0]['path']==actual.relative_to(root).as_posix(),result
+    assert (root/'.git/index').read_bytes()==index_before
+
+
+@pytest.mark.parametrize('explicit',[False,True])
+def test_review_invalid_config_public_cli_is_unverified(tmp_path,monkeypatch,capsys,explicit):
+    commands=[[sys.executable,'-m','pytest','-c','pytest.ini']] if explicit else None
+    source,contract=_single_fixture(tmp_path,monkeypatch,config_text='MALFORMED\n',commands_override=commands)
+    before=(source/'.git/index').read_bytes()
+    monkeypatch.setattr(sys,'argv',['omc_autopilot.py','--target',str(source),'check-work-contract',
+        '--instruction','fix value','--work-contract',str(contract),'--workspace-parent',str(tmp_path/'runs')])
+    rc=autopilot.main()
+    out=capsys.readouterr()
+    result=json.loads(out.out)
+    assert rc==1 and result['status']=='UNVERIFIED',result
+    assert result['reason_code']=='pytest_config_unresolved'
+    assert '확인' in result['explanation'] and 'Traceback' not in out.err
+    assert (source/'.git/index').read_bytes()==before
+    assert not (tmp_path/'runs').exists()
+    assert not (source/'.git/omc-single-approval-claims').exists()
