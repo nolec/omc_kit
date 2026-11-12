@@ -133,8 +133,8 @@ def test_ship_skill_paths_are_identical():
         required_paths=REQUIRED_SHIP_SKILL_PATHS,
         optional_paths=OPTIONAL_SHIP_SKILL_PATHS,
     )
-    canonical = texts[".agents/skills/omc-ship/SKILL.md"]
-    mismatched = [name for name, text in texts.items() if text != canonical]
+    canonical = _shared_source_text(texts[".agents/skills/omc-ship/SKILL.md"])
+    mismatched = [name for name, text in texts.items() if _shared_source_text(text) != canonical]
     assert not mismatched, f"omc-ship skill copies differ: {mismatched}"
 
 
@@ -242,6 +242,7 @@ def test_ship_template_declares_one_next_action_and_environment_stop():
 def _workflow_without_output_protocol(text):
     body, separator, protocol = text.partition('\n## Machine output contract\n')
     assert separator and text.count('\n## Machine output contract\n') == 1
+    protocol = protocol.split('\n## Codex ',1)[0]
     assert len([line for line in protocol.splitlines() if line.strip()]) <= 9
     for marker in ('detached_v1', 'omc-output/v1', 'publish', 'complete-task',
                    '사용자 최종 답변에 붙이지 않는다', 'legacy_inline',
@@ -293,12 +294,17 @@ def test_fresh_install_uses_uncommitted_ship_and_skill_templates(tmp_path):
 
 def test_skill_shared_record_protocol_is_identical_and_fail_closed():
     import pytest
-    shared = _read(ROOT / 'templates/.agents/skills/omc-ship/SKILL.md').split('\n## Machine output contract\n', 1)[1]
+    shared = _read(ROOT / 'templates/.agents/skills/omc-ship/SKILL.md').split('\n## Machine output contract\n', 1)[1].split('\n## Codex ',1)[0]
     for name, file in [('critique', 'SKILL.md'), ('investigate', 'SKILL.md'),
                        ('plan', 'references/workflow.md'), ('review', 'SKILL.md'),
                        ('task', 'SKILL.md'), ('ship', 'SKILL.md')]:
         text = _read(ROOT / 'templates/.agents/skills' / ('omc-' + name) / file)
-        assert text.split('\n## Machine output contract\n', 1)[1] == shared
+        block = text.split('\n## Machine output contract\n', 1)[1].split('\n## Codex ',1)[0]
+        # investigate has a separately tested approved producer instruction.
+        if name == 'investigate' and block.startswith('원문에는 `판정:` 줄을 직접 쓰지 않는다.'):
+            prefix, block = block.split('\n', 1)
+            assert prefix.startswith('원문에는 `판정:` 줄을 직접 쓰지 않는다.')
+        assert block == shared
         _workflow_without_output_protocol(text)
         for marker in ('detached_v1', 'publish', 'legacy_inline', '구형으로 우회하지 않는다'):
             with pytest.raises(AssertionError):
@@ -386,3 +392,44 @@ def test_install_check_preserves_stale_source_index_in_git_layouts(tmp_path, mon
     assert tracked.read_bytes() == content
     assert index.read_bytes() == before
     assert index.stat().st_mode & 0o777 == before_mode
+
+
+def _source_example():
+    text=(ROOT/'templates/.agents/skills/omc-ship/SKILL.md').read_text()
+    match=re.search(r'<!-- OMC_SOURCE_CALL:BEGIN -->\s*```python\n(.*?)\n```\s*<!-- OMC_SOURCE_CALL:END -->',text,re.S)
+    assert match,'missing executable source staging example'
+    return match.group(1)
+
+
+def test_source_staging_example_real_cli(tmp_path):
+    import subprocess,sys,json,hashlib,time,importlib.util
+    cli=ROOT/'scripts/omc_output_contract.py'
+    spec=importlib.util.spec_from_file_location('source_example_contract',cli);m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
+    state=tmp_path/'.omc/state';state.mkdir(parents=True)
+    (state/'latest.json').write_text(json.dumps({'latest_confirmed_session_id':'s'}))
+    source=tmp_path.parent/(tmp_path.name+'-external.txt')
+    stage='ship'
+    kw=dict(stage=stage,risk='low',user_selection_needed=True)
+    if stage=='review':kw['verdict']='APPROVE'
+    else:kw.update(verdict='PROCEED',reason_code='all_gates_passed')
+    source.write_text('검증 근거\n'+m.render_decision(**kw));before=source.read_bytes()
+    r=subprocess.run([sys.executable,'-B','-c',_source_example(),str(cli),str(tmp_path),stage,'example',str(source),hashlib.sha256(before).hexdigest(),'60'],capture_output=True,text=True)
+    assert r.returncode==0,r.stderr
+    assert '판정:' in r.stdout and 'OMC_OUTPUT' not in r.stdout
+    assert source.read_bytes()==before
+    manifest=tmp_path/'.omc/state/output-records/s/example/manifest.json'
+    assert manifest.is_file()
+
+
+def test_source_staging_example_unsupported_stops_before_prepare(tmp_path):
+    import subprocess,sys,json
+    log=tmp_path/'calls';cli=tmp_path/'old.py'
+    cli.write_text('import sys,json\nfrom pathlib import Path\nwith Path('+repr(str(log))+').open("a") as f:f.write(json.dumps(sys.argv[1:])+"\\n")\nprint(json.dumps({"output_modes":["detached_v1"]}))\n')
+    r=subprocess.run([sys.executable,'-B','-c',_source_example(),str(cli),str(tmp_path),'ship','r','/missing','0'*64,'60'],capture_output=True,text=True)
+    assert r.returncode==2 and not r.stdout and '지원' in r.stderr
+    assert [json.loads(x) for x in log.read_text().splitlines()]==[['capabilities']]
+    assert not (tmp_path/'.omc').exists()
+
+
+def _shared_source_text(text):
+    return text.split("\n## Codex ",1)[0].rstrip()

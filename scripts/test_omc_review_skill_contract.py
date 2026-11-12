@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import re
+import pytest
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -185,8 +186,8 @@ def test_review_skill_paths_are_identical():
         required_paths=REQUIRED_REVIEW_SKILL_PATHS,
         optional_paths=OPTIONAL_REVIEW_SKILL_PATHS,
     )
-    canonical = texts[".agents/skills/omc-review/SKILL.md"]
-    mismatched = [name for name, text in texts.items() if text != canonical]
+    canonical = _shared_review_text(texts[".agents/skills/omc-review/SKILL.md"])
+    mismatched = [name for name, text in texts.items() if _shared_review_text(text) != canonical]
     assert not mismatched, f"omc-review skill copies differ: {mismatched}"
 
 
@@ -386,7 +387,14 @@ def test_review_skill_prioritizes_current_bottleneck_over_default_pipeline():
 def _workflow_without_output_protocol(text):
     body, separator, protocol = text.partition('\n## Machine output contract\n')
     assert separator and text.count('\n## Machine output contract\n') == 1
+    protocol, _, example = protocol.partition('\n## Codex 판정 생성 예제\n')
+    example = example.split('\n## Codex 외부 원문 발행 예제\n',1)[0]
     assert len([line for line in protocol.splitlines() if line.strip()]) <= 9
+    if example:
+        match=re.search(r'<!-- OMC_DECISION_CALL:BEGIN -->\s*```python\n(.*?)\n```\s*<!-- OMC_DECISION_CALL:END -->',example,re.S)
+        assert match and example.count('<!-- OMC_DECISION_CALL:BEGIN -->')==1
+        assert len(match.group(1).splitlines()) <= 24
+        assert len([line for line in example.splitlines() if line.strip()]) <= 29
     for marker in ('detached_v1', 'omc-output/v1', 'publish', 'complete-task',
                    '사용자 최종 답변에 붙이지 않는다', 'legacy_inline',
                    '출력 실패', '구형으로 우회하지 않는다'):
@@ -402,7 +410,7 @@ def test_review_copies_require_detached_output_contract():
 def test_tracked_antigravity_review_matches_current_template():
     deployed = ROOT / '.agent/skills/omc-review/SKILL.md'
     template = ROOT / 'templates/.agents/skills/omc-review/SKILL.md'
-    assert deployed.read_bytes() == template.read_bytes()
+    assert _shared_review_text(deployed.read_text()) == _shared_review_text(template.read_text())
     assert deployed.stat().st_mode & 0o777 == template.stat().st_mode & 0o777
 
 
@@ -422,3 +430,89 @@ def test_conditional_review_preparation_and_mission_require_full_reference():
                        '설정 승인은 검사 실행 승인이 아니며', 'prepare/check',
                        '단일 작업 V0', '부모 실행기', '완료 가드', '자동 진입 금지'):
             assert marker in detail
+
+
+def _decision_call_example():
+    texts=[_read(path) for path in REQUIRED_REVIEW_SKILL_PATHS]
+    assert texts[0]==texts[1]
+    match=re.search(r'<!-- OMC_DECISION_CALL:BEGIN -->\s*```python\n(.*?)\n```\s*<!-- OMC_DECISION_CALL:END -->',texts[0],re.S)
+    assert match,'review must contain the actual capability/render invocation example'
+    return match.group(1)
+
+
+def test_review_uses_derived_decision_and_real_example():
+    code=_decision_call_example()
+    assert 'capabilities' in code and 'render_decision' in code and 'render-decision' in code
+
+
+def test_review_decision_example_runs_real_cli(tmp_path):
+    import subprocess,sys,json
+    cli=ROOT/'scripts/omc_output_contract.py'
+    r=subprocess.run([sys.executable,'-B','-c',_decision_call_example(),str(cli),
+        '--stage','review','--verdict','APPROVE','--risk','low','--user-selection-needed','false'],
+        cwd=tmp_path,capture_output=True,text=True,timeout=10)
+    assert r.returncode==0,r.stderr
+    payload=json.loads(r.stdout.split('OMC_OUTPUT: ',1)[1].split(' -->',1)[0])
+    assert payload['next_skill'] is None and payload['user_selection_needed'] is False
+    assert list(tmp_path.iterdir())==[]
+
+
+@pytest.mark.parametrize('kind',['missing','false','string','integer','bad_json','failed','bad_modes','bad_schema'])
+def test_review_example_rejects_unsupported_protocol(tmp_path,kind):
+    import subprocess,sys,json
+    cap={'schema_version':'omc-output-record/v1','output_modes':['legacy_inline','detached_v1']}
+    if kind!='missing':cap['render_decision']={'false':False,'string':'true','integer':1}.get(kind,True)
+    if kind=='bad_modes':cap['output_modes']='detached_v1'
+    if kind=='bad_schema':cap['schema_version']='unknown'
+    log=tmp_path/'calls.jsonl';cli=tmp_path/'legacy.py'
+    cli.write_text('import sys,json\nfrom pathlib import Path\np=Path('+repr(str(log))+')\nwith p.open("a") as f:f.write(json.dumps(sys.argv[1:])+"\\n")\n'
+        +'print('+repr('invalid json' if kind=='bad_json' else json.dumps(cap))+')\nraise SystemExit('+str(7 if kind=='failed' else 0)+')\n')
+    r=subprocess.run([sys.executable,'-B','-c',_decision_call_example(),str(cli),
+        '--stage','review','--verdict','APPROVE','--risk','low','--user-selection-needed','true'],
+        cwd=tmp_path,capture_output=True,text=True,timeout=10)
+    assert r.returncode==2 and not r.stdout,r.stdout+r.stderr
+    assert '지원' in r.stderr
+    assert [json.loads(line) for line in log.read_text().splitlines()]==[['capabilities']]
+    assert not (tmp_path/'.omc').exists()
+
+
+def _shared_review_text(text):
+    """The shared contract stays identical; only the bounded Codex example differs."""
+    return text.split('\n## Codex 판정 생성 예제\n',1)[0].rstrip()
+
+
+def _source_example():
+    text=(ROOT/'templates/.agents/skills/omc-review/SKILL.md').read_text()
+    match=re.search(r'<!-- OMC_SOURCE_CALL:BEGIN -->\s*```python\n(.*?)\n```\s*<!-- OMC_SOURCE_CALL:END -->',text,re.S)
+    assert match,'missing executable source staging example'
+    return match.group(1)
+
+
+def test_source_staging_example_real_cli(tmp_path):
+    import subprocess,sys,json,hashlib,time,importlib.util
+    cli=ROOT/'scripts/omc_output_contract.py'
+    spec=importlib.util.spec_from_file_location('source_example_contract',cli);m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
+    state=tmp_path/'.omc/state';state.mkdir(parents=True)
+    (state/'latest.json').write_text(json.dumps({'latest_confirmed_session_id':'s'}))
+    source=tmp_path.parent/(tmp_path.name+'-external.txt')
+    stage='review'
+    kw=dict(stage=stage,risk='low',user_selection_needed=True)
+    if stage=='review':kw['verdict']='APPROVE'
+    else:kw.update(verdict='PROCEED',reason_code='all_gates_passed')
+    source.write_text('검증 근거\n'+m.render_decision(**kw));before=source.read_bytes()
+    r=subprocess.run([sys.executable,'-B','-c',_source_example(),str(cli),str(tmp_path),stage,'example',str(source),hashlib.sha256(before).hexdigest(),'60'],capture_output=True,text=True)
+    assert r.returncode==0,r.stderr
+    assert '판정:' in r.stdout and 'OMC_OUTPUT' not in r.stdout
+    assert source.read_bytes()==before
+    manifest=tmp_path/'.omc/state/output-records/s/example/manifest.json'
+    assert manifest.is_file()
+
+
+def test_source_staging_example_unsupported_stops_before_prepare(tmp_path):
+    import subprocess,sys,json
+    log=tmp_path/'calls';cli=tmp_path/'old.py'
+    cli.write_text('import sys,json\nfrom pathlib import Path\nwith Path('+repr(str(log))+').open("a") as f:f.write(json.dumps(sys.argv[1:])+"\\n")\nprint(json.dumps({"output_modes":["detached_v1"]}))\n')
+    r=subprocess.run([sys.executable,'-B','-c',_source_example(),str(cli),str(tmp_path),'review','r','/missing','0'*64,'60'],capture_output=True,text=True)
+    assert r.returncode==2 and not r.stdout and '지원' in r.stderr
+    assert [json.loads(x) for x in log.read_text().splitlines()]==[['capabilities']]
+    assert not (tmp_path/'.omc').exists()
