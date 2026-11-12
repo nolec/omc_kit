@@ -96,3 +96,43 @@ except (OSError, ValueError, IndexError, subprocess.SubprocessError):
     raise SystemExit(2)
 ```
 <!-- OMC_DECISION_CALL:END -->
+
+## Codex 외부 원문 발행 예제
+외부 원문은 이동하지 않는다. review는 capture→외부 원문 seal을 마친 동일 파일/SHA를 사용하며, ship은 최종 선언 원문을 고정한다. 아래 코드를 CLI 절대경로·target 절대경로·stage(review|ship)·새 report ID·외부 원문 절대경로·SHA·승인된 남은 초 순서의 인자로 실행한다. 예제는 지원 확인→prepare→stage-source→validate→publish를 수행한다. 기존 producer 지원 확인을 겸하며, 구버전에서는 prepare 전에 종료한다. 실패하면 자동 재시도·재발행하지 않는다. 사본은 승인 증명이 아니며, 이 경로는 task 완료나 다른 단계에 사용하지 않는다.
+<!-- OMC_SOURCE_CALL:BEGIN -->
+```python
+import json, subprocess, sys
+from pathlib import Path
+try:
+    cli, target, stage, report, source, pin, budget = sys.argv[1:]
+    cli = str(Path(cli).resolve(strict=True))
+    def run(*args):
+        p = subprocess.run([sys.executable, '-B', cli, *args], capture_output=True, text=True, timeout=30)
+        if p.returncode:
+            sys.stderr.write(p.stderr)
+            raise SystemExit(p.returncode)
+        return p.stdout
+    cap = json.loads(run('capabilities'))
+    if (not isinstance(cap, dict) or cap.get('stage_source') is not True
+            or cap.get('schema_version') != 'omc-output-record/v1'
+            or not isinstance(cap.get('output_modes'), list)
+            or 'detached_v1' not in cap['output_modes']):
+        print('이 실행기는 외부 원문 사본 생성을 지원하지 않습니다.', file=sys.stderr)
+        raise SystemExit(2)
+    consumer = subprocess.run([sys.executable, '-B', str(Path(cli).with_name('omc_workflow_validation.py')), 'capabilities'], capture_output=True, text=True, timeout=10)
+    if consumer.returncode: raise ValueError('consumer unsupported')
+    supported = json.loads(consumer.stdout)
+    if (not isinstance(supported, dict) or supported.get('schema_version') != 'omc-output-record/v1'
+            or not isinstance(supported.get('output_modes'), list) or 'detached_v1' not in supported['output_modes']):
+        raise ValueError('consumer unsupported')
+    meta = json.loads(run('prepare', '--target', target, '--stage', stage, '--report-id', report, '--budget-sec', budget))
+    context = ['--target', target, '--output-context', meta['output_context'], '--output-context-sha256', meta['output_context_sha256']]
+    local = json.loads(run('stage-source', *context, '--source-file', source, '--source-sha256', pin))
+    args = [*context, '--source-file', local['source_file'], '--source-sha256', local['source_sha256']]
+    run('validate', *args)
+    sys.stdout.write(run('publish', *args))
+except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):
+    print('발행 실행을 확인하지 못했습니다. 원문을 보존하고 중단합니다.', file=sys.stderr)
+    raise SystemExit(2)
+```
+<!-- OMC_SOURCE_CALL:END -->

@@ -1311,3 +1311,198 @@ def test_decision_public_cli_rejects_without_state_writes(tmp_path,extra):
 def test_decision_capability_is_additive():
     m=_load_module();v=m.capabilities();assert v['render_decision'] is True
     assert v['schema_version']=='omc-output-record/v1' and v['output_modes']==['legacy_inline','detached_v1']
+
+
+def _stage_case(case, stage='review'):
+    import hashlib
+    root, context, _, ctx, raw = case
+    ctx['stage'] = stage
+    context.write_text(json.dumps(ctx))
+    m = _load_module()
+    if stage == 'ship':
+        raw = '검사 근거\n' + m.render_envelope(stage='ship', verdict='PROCEED', risk='low', reason_code='all_gates_passed', next_skill=None, user_selection_needed=True)
+    source = root.parent / (root.name + '-external.txt')
+    source.write_text(raw)
+    return root, context, hashlib.sha256(context.read_bytes()).hexdigest(), ctx, source, hashlib.sha256(source.read_bytes()).hexdigest()
+
+
+@pytest.mark.parametrize('stage',['review','ship'])
+def test_stage_source_cli_roundtrip_and_preservation(detached_case,stage):
+    import hashlib
+    root, context, pin, ctx, source, sha = _stage_case(detached_case,stage)
+    before=source.read_bytes(); m=_load_module()
+    direct=_decision_cli(root,'publish','--target',str(root),'--output-context',str(context),'--output-context-sha256',pin,'--source-file',str(source),'--source-sha256',sha)
+    assert direct.returncode==2 and 'record_path_outside_work' in direct.stderr
+    result=_decision_cli(root,'stage-source','--target',str(root),'--output-context',str(context),'--output-context-sha256',pin,'--source-file',str(source),'--source-sha256',sha)
+    assert result.returncode==0,result.stderr
+    meta=json.loads(result.stdout);local=Path(meta['source_file'])
+    assert local.read_bytes()==before==source.read_bytes() and meta['source_sha256']==sha
+    assert local.stat().st_mode & 0o777 == 0o600
+    assert local==m.record_path(root,ctx).parent.parent/'.source-staging/r.txt'
+    assert not m.record_path(root,ctx).exists()
+    args=['--target',str(root),'--output-context',str(context),'--output-context-sha256',pin,'--source-file',str(local),'--source-sha256',sha]
+    assert _decision_cli(root,'validate',*args).returncode==0
+    pub=_decision_cli(root,'publish',*args);assert pub.returncode==0,pub.stderr
+    manifest=m.record_path(root,ctx)
+    record=m.read_record(root,manifest,hashlib.sha256(manifest.read_bytes()).hexdigest(),ctx,display=pub.stdout)
+    assert record['raw_source'].encode()==before
+    assert _decision_cli(root,'stage-source',*args).returncode==2
+
+
+@pytest.mark.parametrize('defect',['hash','stage','expired','session','work','observation','task','source_link','parent_link','large','duplicate','manifest'])
+def test_stage_source_rejects_unsafe_input(detached_case,defect):
+    import time
+    root,context,pin,ctx,source,sha=_stage_case(detached_case);m=_load_module()
+    if defect=='hash':sha='0'*64
+    if defect=='stage':ctx['stage']='ship'
+    if defect=='expired':ctx['deadline_epoch']=time.time()-1
+    if defect=='session':ctx['session_id']='other'
+    if defect=='work':ctx['work_id']='other'
+    if defect=='observation':ctx['context_kind']='observation_only'
+    if defect=='task':ctx['stage']='task'
+    if defect=='source_link':
+        moved=source.with_suffix('.raw');source.rename(moved);source.symlink_to(moved)
+    if defect=='parent_link':
+        alias=source.parent/(root.name+'-alias');alias.symlink_to(source.parent,target_is_directory=True);source=alias/source.name
+    if defect=='large':source.write_bytes(b'x'*(1024*1024+1))
+    if defect=='duplicate':
+        local=m.record_path(root,ctx).parent.parent/'.source-staging/r.txt';local.parent.mkdir(parents=True);local.write_text('preserve')
+    if defect=='manifest':m.record_path(root,ctx).parent.mkdir(parents=True)
+    import hashlib
+    context.write_text(json.dumps(ctx));pin=hashlib.sha256(context.read_bytes()).hexdigest()
+    protected={p:p.read_bytes() for p in root.rglob('*') if p.is_file()}
+    result=_decision_cli(root,'stage-source','--target',str(root),'--output-context',str(context),'--output-context-sha256',pin,'--source-file',str(source),'--source-sha256',sha)
+    assert result.returncode==2 and not result.stdout
+    assert all(p.read_bytes()==v for p,v in protected.items())
+    assert not m.record_path(root,ctx).exists()
+
+
+@pytest.mark.parametrize('operation',['write','fsync','link'])
+def test_stage_source_io_failure_has_no_success_copy(detached_case,monkeypatch,operation):
+    root,context,pin,ctx,source,sha=_stage_case(detached_case);m=_load_module();before=source.read_bytes()
+    def fail(*a,**kw):raise PermissionError('injected')
+    monkeypatch.setattr(m.os,operation,fail)
+    with pytest.raises(OSError):m.stage_source(root,context,pin,source,sha)
+    assert source.read_bytes()==before
+    folder=m.record_path(root,ctx).parent.parent/'.source-staging'
+    assert not list(folder.glob('*')) and not m.record_path(root,ctx).exists()
+
+
+def test_stage_source_concurrent_one_winner(detached_case):
+    from concurrent.futures import ThreadPoolExecutor
+    root,context,pin,ctx,source,sha=_stage_case(detached_case)
+    def invoke():return _decision_cli(root,'stage-source','--target',str(root),'--output-context',str(context),'--output-context-sha256',pin,'--source-file',str(source),'--source-sha256',sha)
+    with ThreadPoolExecutor(max_workers=2) as pool:results=list(pool.map(lambda _:invoke(),range(2)))
+    assert sorted(r.returncode for r in results)==[0,2]
+
+
+def test_stage_source_rechecks_context_before_commit(detached_case,monkeypatch):
+    root,context,pin,ctx,source,sha=_stage_case(detached_case);m=_load_module();original=m.os.fsync
+    def change(fd):
+        original(fd)
+        (root/'.omc/state/latest.json').write_text(json.dumps({'latest_confirmed_session_id':'changed'}))
+    monkeypatch.setattr(m.os,'fsync',change)
+    with pytest.raises(m.OutputContractError):m.stage_source(root,context,pin,source,sha)
+    assert not (m.record_path(root,ctx).parent.parent/'.source-staging/r.txt').exists()
+
+
+def test_stage_source_capability():
+    assert _load_module().capabilities()['stage_source'] is True
+
+
+def test_stage_source_resume_generation_and_rotation(detached_case,monkeypatch):
+    import sys,types
+    root,context,pin,ctx,source,sha=_stage_case(detached_case)
+    resume={'grant_id':'grant','generation':'.omc/resume/g1'}
+    monkeypatch.setitem(sys.modules,'omc_edit_resume',types.SimpleNamespace(frozen=lambda _:True,load=lambda _:resume))
+    ctx['edit_resume']=dict(resume)
+    import hashlib
+    context.write_text(json.dumps(ctx));pin=hashlib.sha256(context.read_bytes()).hexdigest();m=_load_module()
+    result=m.stage_source(root,context,pin,source,sha)
+    assert Path(result['source_file'])==root/'.omc/resume/g1/output-records/.source-staging/r.txt'
+    resume['generation']='.omc/resume/g2'
+    with pytest.raises(m.OutputContractError,match='generation'):m.stage_source(root,context,pin,source,sha)
+
+
+@pytest.mark.parametrize('defect',['source_change','parent_change','destination_link','zero_write','second_fsync'])
+def test_stage_source_race_and_partial_failure(detached_case,monkeypatch,defect):
+    root,context,pin,ctx,source,sha=_stage_case(detached_case);m=_load_module()
+    folder=m.record_path(root,ctx).parent.parent/'.source-staging'
+    outside=root.parent/(root.name+'-outside');outside.mkdir()
+    if defect=='source_change':
+        original=m.os.read
+        def read(fd,size):
+            data=original(fd,size)
+            if data:source.write_bytes(b'changed')
+            return data
+        monkeypatch.setattr(m.os,'read',read)
+    elif defect=='zero_write':monkeypatch.setattr(m.os,'write',lambda *a:0)
+    elif defect=='destination_link':
+        folder.parent.mkdir(parents=True,exist_ok=True);folder.symlink_to(outside,target_is_directory=True)
+    else:
+        original=m.os.fsync;count=[0]
+        def sync(fd):
+            count[0]+=1
+            if defect=='second_fsync' and count[0]==2:raise OSError('injected directory sync')
+            original(fd)
+            if defect=='parent_change' and count[0]==1:
+                folder.rename(folder.with_name('moved'));folder.symlink_to(outside,target_is_directory=True)
+        monkeypatch.setattr(m.os,'fsync',sync)
+    with pytest.raises((OSError,m.OutputContractError)):m.stage_source(root,context,pin,source,sha)
+    assert not list(outside.iterdir()) and not m.record_path(root,ctx).exists()
+    # A fully committed but unacknowledged copy may remain after directory fsync failure.
+    if defect!='second_fsync':assert not (folder/'r.txt').exists()
+
+
+def test_stage_source_real_sealed_review_roundtrip(detached_case):
+    import subprocess,sys,hashlib
+    root,context,pin,ctx,source,sha=_stage_case(detached_case)
+    def git(*args):return subprocess.run(['git',*args],cwd=root,capture_output=True,text=True,check=True).stdout.strip()
+    git('init','-q');git('config','user.email','fixture@example.invalid');git('config','user.name','fixture')
+    (root/'.gitignore').write_text('.omc/\n');(root/'file.txt').write_text('before')
+    git('add','.gitignore','file.txt');git('commit','-qm','baseline');base=git('rev-parse','HEAD')
+    (root/'file.txt').write_text('after');git('add','file.txt');index=(root/'.git/index').read_bytes()
+    cli=ROOT/'scripts/omc_review_snapshot.py'
+    def command(*args):
+        p=subprocess.run([sys.executable,str(cli),*args],cwd=root,capture_output=True,text=True)
+        assert p.returncode==0,p.stdout+p.stderr
+        return json.loads(p.stdout)
+    capture=command('capture-review','--target',str(root),'--base-commit',base)
+    seal=command('seal-review-output','--target',str(root),'--review-snapshot',capture['snapshot_path'],'--review-snapshot-sha256',capture['snapshot_sha256'],'--review-output',str(source))
+    assert Path(seal['evidence_path']).is_file()
+    result=_decision_cli(root,'stage-source','--target',str(root),'--output-context',str(context),'--output-context-sha256',pin,'--source-file',str(source),'--source-sha256',sha)
+    assert result.returncode==0,result.stderr
+    local=Path(json.loads(result.stdout)['source_file']);assert hashlib.sha256(local.read_bytes()).hexdigest()==sha
+    args=['--target',str(root),'--output-context',str(context),'--output-context-sha256',pin,'--source-file',str(local),'--source-sha256',sha]
+    assert _decision_cli(root,'validate',*args).returncode==0
+    p=_decision_cli(root,'publish',*args);assert p.returncode==0,p.stderr
+    m=_load_module();manifest=m.record_path(root,ctx)
+    rec=m.read_record(root,manifest,hashlib.sha256(manifest.read_bytes()).hexdigest(),ctx,display=p.stdout)
+    assert rec['raw_source']==source.read_text() and (root/'.git/index').read_bytes()==index
+
+
+def test_stage_source_tampered_copy_is_not_publishable(detached_case):
+    root,context,pin,ctx,source,sha=_stage_case(detached_case);m=_load_module()
+    local=Path(m.stage_source(root,context,pin,source,sha)['source_file']);local.write_text('tampered')
+    r=_decision_cli(root,'publish','--target',str(root),'--output-context',str(context),'--output-context-sha256',pin,'--source-file',str(local),'--source-sha256',sha)
+    assert r.returncode==2 and not m.record_path(root,ctx).exists()
+
+
+@pytest.mark.parametrize('stage',['review','ship'])
+@pytest.mark.parametrize('normal_first',[False,True])
+def test_stage_source_report_id_matches_old_folder_name(detached_case,stage,normal_first):
+    import hashlib
+    root,context,pin,ctx,source,sha=_stage_case(detached_case,stage)
+    m=_load_module()
+    if normal_first:m.stage_source(root,context,pin,source,sha)
+    ctx['report_id']='source-staging'
+    context.write_text(json.dumps(ctx));pin=hashlib.sha256(context.read_bytes()).hexdigest()
+    staged=_decision_cli(root,'stage-source','--target',str(root),'--output-context',str(context),'--output-context-sha256',pin,'--source-file',str(source),'--source-sha256',sha)
+    assert staged.returncode==0,staged.stderr
+    local=json.loads(staged.stdout)
+    assert Path(local['source_file']).parent.name=='.source-staging'
+    assert Path(local['source_file']).read_bytes()==source.read_bytes()
+    pub=_decision_cli(root,'publish','--target',str(root),'--output-context',str(context),'--output-context-sha256',pin,'--source-file',local['source_file'],'--source-sha256',sha)
+    assert pub.returncode==0,pub.stderr
+    manifest=m.record_path(root,ctx)
+    m.read_record(root,manifest,hashlib.sha256(manifest.read_bytes()).hexdigest(),ctx,display=pub.stdout)

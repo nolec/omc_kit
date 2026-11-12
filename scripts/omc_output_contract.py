@@ -460,7 +460,7 @@ _VERDICT_KO = {'PROCEED':'진행 가능','HOLD':'보류','REVISE':'수정 필요
 
 
 def capabilities():
-    return {'schema_version':RECORD_SCHEMA,'output_modes':['legacy_inline','detached_v1'], 'render_decision':True}
+    return {'schema_version':RECORD_SCHEMA,'output_modes':['legacy_inline','detached_v1'], 'render_decision':True, 'stage_source':True}
 
 
 def _sha(data):
@@ -941,6 +941,114 @@ def emit_record(root, context_path, context_pin, raw, *, source_kind='model_decl
                              draft=draft if source_kind == 'model_declared' else None)
 
 
+def _source_directory(path, *, create=False):
+    """Open an absolute directory chain without following any links."""
+    path = Path(path).absolute()
+    if '..' in path.parts:
+        raise OutputContractError('record_path_escape')
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    held = os.open(path.anchor, flags)
+    try:
+        for part in path.parts[1:]:
+            if create:
+                try: os.mkdir(part, mode=0o700, dir_fd=held)
+                except FileExistsError: pass
+            child = os.open(part, flags, dir_fd=held)
+            os.close(held); held = child
+        return held
+    except BaseException:
+        os.close(held)
+        raise
+
+
+def _source_identity(info):
+    return (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+
+
+def stage_source(root, context_path, context_pin, source_file, source_pin):
+    """Stage explicitly pinned report bytes; this grants no approval authority."""
+    import stat
+    import uuid
+    root = Path(root).resolve()
+    context = load_output_context(root, context_path, context_pin)
+    if context.get('context_kind') is not None or context['stage'] not in {'review','ship'}:
+        raise OutputContractError('source_stage_forbidden')
+    if not isinstance(source_pin,str) or not re.fullmatch('[0-9a-f]{64}',source_pin):
+        raise OutputContractError('record_hash_mismatch')
+    manifest = record_path(root,context)
+    _local_file(root,manifest,must_exist=False)
+    if manifest.parent.exists():
+        raise OutputContractError('source_report_already_reserved')
+    source = Path(source_file)
+    if not source.is_absolute():
+        raise OutputContractError('source_absolute_path_required')
+    parent = _source_directory(source.parent)
+    try:
+        fd = os.open(source.name,os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK,dir_fd=parent)
+        try:
+            before = os.fstat(fd)
+            if not stat.S_ISREG(before.st_mode):raise OutputContractError('source_regular_file_required')
+            if before.st_size > 1024*1024:raise OutputContractError('source_too_large')
+            chunks=[];total=0
+            while True:
+                block=os.read(fd,min(65536,1024*1024+1-total))
+                if not block:break
+                chunks.append(block);total+=len(block)
+                if total>1024*1024:raise OutputContractError('source_too_large')
+            raw=b''.join(chunks)
+            after=os.fstat(fd)
+            observed=os.stat(source.name,dir_fd=parent,follow_symlinks=False)
+            check=_source_directory(source.parent)
+            try:
+                if _source_identity(os.fstat(parent))[:2] != _source_identity(os.fstat(check))[:2]:
+                    raise OutputContractError('source_directory_changed')
+            finally:os.close(check)
+            if _source_identity(before)!=_source_identity(after) or _source_identity(before)!=_source_identity(observed):
+                raise OutputContractError('source_changed')
+        finally:os.close(fd)
+    finally:os.close(parent)
+    if _sha(raw)!=source_pin:raise OutputContractError('record_hash_mismatch')
+    preflight_record(root,context_path,context_pin,raw.decode('utf-8'))
+    folder=manifest.parent.parent/'.source-staging'
+    _local_file(root,folder,must_exist=False)
+    directory=_source_directory(folder,create=True)
+    temporary='.'+uuid.uuid4().hex+'.tmp'; destination=context['report_id']+'.txt'
+    created=False
+    try:
+        fd=os.open(temporary,os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,0o600,dir_fd=directory)
+        created=True
+        try:
+            view=memoryview(raw)
+            while view:
+                count=os.write(fd,view)
+                if count<=0:raise OSError('source short write')
+                view=view[count:]
+            os.fsync(fd)
+        finally:os.close(fd)
+        load_output_context(root,context_path,context_pin)
+        _local_file(root,folder,must_exist=False)
+        check=_source_directory(folder)
+        try:
+            if _source_identity(os.fstat(directory))[:2]!=_source_identity(os.fstat(check))[:2]:
+                raise OutputContractError('source_directory_changed')
+        finally:os.close(check)
+        if manifest.parent.exists():raise OutputContractError('source_report_already_reserved')
+        os.link(temporary,destination,src_dir_fd=directory,dst_dir_fd=directory,follow_symlinks=False)
+        os.fsync(directory)
+        load_output_context(root,context_path,context_pin)
+        check=_source_directory(folder)
+        try:
+            if _source_identity(os.fstat(directory))[:2]!=_source_identity(os.fstat(check))[:2]:
+                raise OutputContractError('source_directory_changed')
+        finally:os.close(check)
+        return {'source_file':str(folder/destination),'source_sha256':source_pin}
+    finally:
+        if created:
+            try:os.unlink(temporary,dir_fd=directory)
+            except OSError:pass  # no success claim from a leftover private temporary
+        os.close(directory)
+
+
 def output_cli(argv=None):
     parser=argparse.ArgumentParser(description='OMC 별도 기록과 한글 판정')
     sub=parser.add_subparsers(dest='command',required=True)
@@ -951,6 +1059,12 @@ def output_cli(argv=None):
     decision.add_argument('--risk',choices=sorted(_RISKS),required=True)
     decision.add_argument('--reason-code')
     decision.add_argument('--user-selection-needed',choices=['true','false'],default=argparse.SUPPRESS)
+    staging=sub.add_parser('stage-source',help='외부 원문을 보존하고 발행용 사본 저장')
+    staging.add_argument('--target',type=Path,required=True)
+    staging.add_argument('--output-context',type=Path,required=True)
+    staging.add_argument('--output-context-sha256',required=True)
+    staging.add_argument('--source-file',type=Path,required=True)
+    staging.add_argument('--source-sha256',required=True)
     prep=sub.add_parser('prepare')
     prep.add_argument('--target',type=Path,required=True)
     prep.add_argument('--stage',choices=list(_STAGE_VERDICTS),required=True)
@@ -969,6 +1083,12 @@ def output_cli(argv=None):
     args=parser.parse_args(argv)
     if args.command=='capabilities':
         print(json.dumps(capabilities()));return 0
+    if args.command=='stage-source':
+        try:
+            result=stage_source(args.target,args.output_context,args.output_context_sha256,args.source_file,args.source_sha256)
+            print(json.dumps(result,ensure_ascii=False));return 0
+        except (OSError,ValueError,KeyError,TypeError) as exc:
+            print('발행용 사본을 확인하지 못했습니다. 원문을 보존합니다. [오류 코드: '+str(exc)+']',file=sys.stderr);return 2
     if args.command=='render-decision':
         try:
             options=({'user_selection_needed':args.user_selection_needed=='true'}
