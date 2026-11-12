@@ -2144,38 +2144,96 @@
       "reason": "live_observation_not_enabled",
       "consumers_requeried": false
     },
-    "date": "2026-11-12",
-    "status": "현재 · A·B 원본 통합·기능별 커밋 / 기존 스테이징 보존 · 2026-11-12",
-    "latest_fields": {
-      "현재 상태": "A 라우팅 판정 생성기와 B 외부 원문 보존·발행 사본 저장을 원본에 통합하고 기능별 로컬 커밋했다. source-staging 보고 ID 충돌은 .source-staging 내부 폴더로 분리했다.",
-      "보완 내용": "render-decision은 정책 소유 필드를 계산하며 기존 판정 검사를 유지한다. stage-source는 review·ship만 지원하고 외부 원문을 수정하지 않으며 문맥·해시·링크·경합·덮어쓰기 검사를 유지한다.",
-      "검증": "A 원본 통합 회귀 351개 통과. B 최종 원본 통합 회귀 407 passed in 54.60s. 격리 후보 441개와 원본 수치는 선행 보완 포함 범위가 달라 합산하지 않는다. 로드맵·대시보드 4표현의 최신 상태·근거·보류 일치를 별도 확인한다.",
-      "Git·리뷰 범위": "A e4ef285d, B f1351c54. 기존 docs/orchestration_usage.md·scripts/omc_autopilot.py·scripts/omc_autopilot_safe.py·scripts/test_omc_autopilot_safe.py의 스테이징·내용·모드·플래그는 보존하고 이번 커밋에서 제외했다. 동일 에이전트의 격리 재검토이며 외부 독립 리뷰가 아니다.",
-      "중단·설정": "외부 경로 직접 publish·task 완료 가드 우회·자동 재시도·덮어쓰기는 허용하지 않는다. 이번 요청에 릴리스·재설치는 포함하지 않는다. 기존 원문·receipt는 보존한다.",
-      "이력·보류": "0.7.1/d96dd1fa의 로컬 릴리스·12곳 재설치·strict 감사는 이전 완료 이력이다(전체6579 통과·15 제외). 원본 VERSION은 보존된 0.7.0이며 A·B는 새 릴리스·재설치 전이다. 비교 HOLD·실제 업무 효과 NOT_RUN·역사적 보존 UNKNOWN·관찰 비활성을 유지한다.",
-      "근거": ".omc/integrations/ab-20261112의 검증·보존·커밋 기록, .omc/releases/0.7.1/result.json. A·B 및 이름 충돌 수정의 기존 격리 검증 원문은 별도 보존한다.",
-      "다음 작업": "통합본의 릴리스·재설치 여부를 별도 결정한다. 이 커밋은 실제 사용자 개입 감소나 경쟁 우위의 증거가 아니다."
-    },
     "feature_commits": {
       "A": "e4ef285d36072b65f8088b6e7b8c7dabdf4a77df",
       "B": "f1351c5407b96b70d4f1f3f897487fc83ca1aad3"
     },
-    "commit_status": "A_B_COMMITTED_DOCUMENTATION_CURRENT_CHECKOUT",
+    "date": "2026-11-12",
+    "status": "현재 · 0.7.2 로컬 릴리스·12곳 재설치 완료 / 기존 스테이징 보존 · 2026-11-12",
+    "latest_fields": {
+      "현재 상태": "0.7.2 고정 후보 d8a1c9e54824e042d5ead04c509be092c1c46172의 로컬 릴리스와 기존 12곳 재설치·strict 감사를 완료했다. 기존 작업 파일·인덱스·HEAD를 보존했다.",
+      "보완 내용": "0.7.1 기반 보완과 A 정책 기반 판정 생성·B 외부 원문 발행용 사본 저장을 포함한다. source-staging 보고 ID 충돌을 .source-staging으로 분리하고, review 복사본 동기화 및 review·ship 전체 일치 검사를 복원했다.",
+      "검증": "수정 후보 사전 guidance13개·관련61개 통과. 이번 승인 전체 검사1회는 6,694개 통과·실패0·생략0·정책 제외15개, 3,309.53초(약55분10초)다. 12/12곳 strict 감사·동일 배포 SHA·기존 작업 파일/index/HEAD 보존을 확인했다. 서로 다른 실행의 통과 수는 합산하지 않는다.",
+      "Git·리뷰 범위": "설치된 릴리스 후보는 d8a1c9e5, 로컬 참조는 refs/omc/releases/0.7.2다. 원본 수정 커밋은 ffc0e28f이며 이번 후속 문서 커밋은 제품 릴리스와 별개다. 기존 docs/orchestration_usage.md·scripts/omc_autopilot.py·scripts/omc_autopilot_safe.py·scripts/test_omc_autopilot_safe.py의 내용·스테이징·모드·플래그를 보존하고 문서 커밋에서 제외한다.",
+      "중단·설정": "첫 후보 7fb6bcbf의 전체 검사는 6,691개 통과·1개 실패·15개 제외로 중단했고 설치0곳이었다. 해당 실패는 소급 성공으로 바꾸지 않았다. 수정 후보에는 별도 승인을 받아 전체 검사1회·최대60분으로 실행했다. 원격 push·태그·공개 릴리스는 하지 않았다.",
+      "이력·보류": "이전 0.7.1/d96dd1fa의 12곳 설치는 이력으로 유지한다. 현재 기존12곳 설치 기준은0.7.2다. 원본 VERSION0.7.0과 별도4파일 스테이징은 보존된 개발 상태이며 설치 릴리스와 구분한다. 비교 HOLD·실제 업무 효과 NOT_RUN·역사적 보존 UNKNOWN·관찰 비활성을 유지한다.",
+      "근거": ".omc/releases/0.7.2/result.json 및 installation-results.json. 설치 전 백업은 installation-backups/, 이번 품질 원문은 attempts/second/quality-archive/, 이전 실패 참조는 attempts/first-failed/에 보존한다. 배포 SHA는 d0dfce407649a2fbab3716be310b001ce1b2a283be6d321c38f69ab16ff9e5ca다.",
+      "다음 작업": "이번 문서 최신화로 릴리스·재설치 완료를 기록하되, 실제 사용자 개입 감소·업무 효과·경쟁 우위가 입증됐다고 판단하지 않는다."
+    },
+    "commit_status": "RELEASED_AND_REINSTALLED_DOCUMENTATION_CURRENT_CHECKOUT",
     "installed_release": {
-      "version": "0.7.1",
-      "source_commit": "d96dd1fa43eb3f31e02fd29eac480d05be2f2c78",
+      "version": "0.7.2",
+      "source_commit": "d8a1c9e54824e042d5ead04c509be092c1c46172",
       "targets": 12,
-      "historical": true,
-      "includes_A_B": false
+      "strict_audit_passed_targets": 12,
+      "includes_A_B": true,
+      "historical": false,
+      "source_sha256": "d0dfce407649a2fbab3716be310b001ce1b2a283be6d321c38f69ab16ff9e5ca"
     },
     "original_version": "0.7.0",
     "verification": {
-      "A": "351 passed",
-      "B": "407 passed in 54.60s",
+      "passed": 6694,
+      "failed": 0,
+      "skipped": 0,
+      "deselected": 15,
+      "seconds": 3309.5265579579864,
+      "quality_runs_this_approval": 1,
       "product_effect": "NOT_RUN"
+    },
+    "previous_attempt": {
+      "candidate": "7fb6bcbf273fa12fcfc34595798b4688dfb58de9",
+      "passed": 6691,
+      "failed": 1,
+      "installed": 0,
+      "preserved": true
     }
   },
   "current_update_history": [
+    {
+      "goal": "oh-my-claudecode의 강점을 흡수해 실제 업무를 정확하고 적은 개입으로 끝내는 OMC를 만든다.",
+      "comparison_state": "HOLD",
+      "actual_home": "NOT_VERIFIED",
+      "historical_preservation_revalidation": "UNKNOWN",
+      "existing_formal_holds": "PRESERVED",
+      "comparison_runs": 0,
+      "comparison_status": "NOT_RUN",
+      "local_observation": {
+        "cohort_v3": "DISABLED",
+        "completion_observation": "OBSERVATION_INVALID",
+        "reason": "live_observation_not_enabled",
+        "consumers_requeried": false
+      },
+      "date": "2026-11-12",
+      "status": "현재 · A·B 원본 통합·기능별 커밋 / 기존 스테이징 보존 · 2026-11-12",
+      "latest_fields": {
+        "현재 상태": "A 라우팅 판정 생성기와 B 외부 원문 보존·발행 사본 저장을 원본에 통합하고 기능별 로컬 커밋했다. source-staging 보고 ID 충돌은 .source-staging 내부 폴더로 분리했다.",
+        "보완 내용": "render-decision은 정책 소유 필드를 계산하며 기존 판정 검사를 유지한다. stage-source는 review·ship만 지원하고 외부 원문을 수정하지 않으며 문맥·해시·링크·경합·덮어쓰기 검사를 유지한다.",
+        "검증": "A 원본 통합 회귀 351개 통과. B 최종 원본 통합 회귀 407 passed in 54.60s. 격리 후보 441개와 원본 수치는 선행 보완 포함 범위가 달라 합산하지 않는다. 로드맵·대시보드 4표현의 최신 상태·근거·보류 일치를 별도 확인한다.",
+        "Git·리뷰 범위": "A e4ef285d, B f1351c54. 기존 docs/orchestration_usage.md·scripts/omc_autopilot.py·scripts/omc_autopilot_safe.py·scripts/test_omc_autopilot_safe.py의 스테이징·내용·모드·플래그는 보존하고 이번 커밋에서 제외했다. 동일 에이전트의 격리 재검토이며 외부 독립 리뷰가 아니다.",
+        "중단·설정": "외부 경로 직접 publish·task 완료 가드 우회·자동 재시도·덮어쓰기는 허용하지 않는다. 이번 요청에 릴리스·재설치는 포함하지 않는다. 기존 원문·receipt는 보존한다.",
+        "이력·보류": "0.7.1/d96dd1fa의 로컬 릴리스·12곳 재설치·strict 감사는 이전 완료 이력이다(전체6579 통과·15 제외). 원본 VERSION은 보존된 0.7.0이며 A·B는 새 릴리스·재설치 전이다. 비교 HOLD·실제 업무 효과 NOT_RUN·역사적 보존 UNKNOWN·관찰 비활성을 유지한다.",
+        "근거": ".omc/integrations/ab-20261112의 검증·보존·커밋 기록, .omc/releases/0.7.1/result.json. A·B 및 이름 충돌 수정의 기존 격리 검증 원문은 별도 보존한다.",
+        "다음 작업": "통합본의 릴리스·재설치 여부를 별도 결정한다. 이 커밋은 실제 사용자 개입 감소나 경쟁 우위의 증거가 아니다."
+      },
+      "feature_commits": {
+        "A": "e4ef285d36072b65f8088b6e7b8c7dabdf4a77df",
+        "B": "f1351c5407b96b70d4f1f3f897487fc83ca1aad3"
+      },
+      "commit_status": "A_B_COMMITTED_DOCUMENTATION_CURRENT_CHECKOUT",
+      "installed_release": {
+        "version": "0.7.1",
+        "source_commit": "d96dd1fa43eb3f31e02fd29eac480d05be2f2c78",
+        "targets": 12,
+        "historical": true,
+        "includes_A_B": false
+      },
+      "original_version": "0.7.0",
+      "verification": {
+        "A": "351 passed",
+        "B": "407 passed in 54.60s",
+        "product_effect": "NOT_RUN"
+      }
+    },
     {
       "goal": "oh-my-claudecode의 강점을 흡수해 실제 업무를 정확하고 적은 개입으로 끝내는 OMC를 만든다.",
       "comparison_state": "HOLD",
