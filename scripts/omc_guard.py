@@ -3,15 +3,17 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
+import time
 import os
 import re
+import stat
 import subprocess
 import sys
 from pathlib import Path
 
-import omc_state
-
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import omc_state
 import omc_utils
 
 
@@ -416,9 +418,249 @@ def require_confirmation(project_root: Path, *, command_name: str, scope: str = 
     return 0
 
 
+def _isolated_environment():
+    # Per-child only: do not edit the user's Git configuration or HOME.
+    env = {key: value for key, value in os.environ.items() if not key.startswith('GIT_')}
+    for key in ('PYTHONPATH', 'PYTHONHOME', 'OMC_EDIT_RESUME_CONTEXT'):
+        env.pop(key, None)
+    env.update(GIT_CONFIG_NOSYSTEM='1', GIT_CONFIG_GLOBAL=os.devnull,
+               GIT_ATTR_NOSYSTEM='1', GIT_OPTIONAL_LOCKS='0', GIT_TERMINAL_PROMPT='0')
+    return env
+
+
+def _isolated_run(argv, *, cwd, env, deadline, limit=15):
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise subprocess.TimeoutExpired(argv, 0)
+    return subprocess.run(argv, cwd=cwd, env=env, capture_output=True, text=True,
+                          check=True, timeout=min(limit, remaining))
+
+
+def _isolated_git(root, arguments, *, env, deadline, limit=15):
+    return _isolated_run(['git', '-c', 'core.hooksPath=' + os.devnull,
+                          '-c', 'core.fsmonitor=false', '-c', 'init.templateDir=',
+                          '-C', str(root), *arguments], cwd=root, env=env,
+                         deadline=deadline, limit=limit).stdout.strip()
+
+
+def _isolated_paths(destination, paths, *, deadline):
+    """Classify lexical aliases and physical directory scopes consistently."""
+    blocked = []
+    protected_directories = set()
+    for parent, dirs, files in os.walk(destination, followlinks=False):
+        if time.monotonic() >= deadline:
+            raise subprocess.TimeoutExpired('isolated_path_scan', 0)
+        if Path(parent) == destination:
+            dirs[:] = [name for name in dirs if name not in {'.git', '.omc'}]
+        for name in [*dirs, *files]:
+            if time.monotonic() >= deadline:
+                raise subprocess.TimeoutExpired('isolated_path_scan', 0)
+            path = Path(parent) / name
+            if path.is_symlink():
+                blocked.append(path.relative_to(destination).as_posix())
+                ancestor = path.parent
+                while True:
+                    if time.monotonic() >= deadline:
+                        raise subprocess.TimeoutExpired('isolated_path_scan', 0)
+                    info = ancestor.lstat()
+                    protected_directories.add((info.st_dev, info.st_ino))
+                    if ancestor == destination:
+                        break
+                    ancestor = ancestor.parent
+    invalid = []
+    for name in paths:
+        if time.monotonic() >= deadline:
+            raise subprocess.TimeoutExpired('isolated_path_scan', 0)
+        path = Path(name)
+        if (not name or path.is_absolute() or '..' in path.parts
+                or any(part.casefold() in {'.git', '.omc'} for part in path.parts)):
+            invalid.append(name)
+            continue
+        normalized = path.as_posix()
+        if any(normalized == item or normalized.startswith(item + '/')
+               or item.startswith(normalized.rstrip('/') + '/') or normalized == '.'
+               for item in blocked):
+            invalid.append(name)
+            continue
+        # lstat each existing component, stopping at a link before looking at
+        # descendants. Do not resolve a link into source governance or .git.
+        node = destination
+        try:
+            info = node.lstat()
+            for part in path.parts:
+                node = node / part
+                info = node.lstat()
+                if stat.S_ISLNK(info.st_mode):
+                    invalid.append(name)
+                    break
+            else:
+                if (stat.S_ISDIR(info.st_mode)
+                        and (info.st_dev, info.st_ino) in protected_directories):
+                    invalid.append(name)
+        except FileNotFoundError:
+            pass  # A new ordinary path is allowed once its ancestors are safe.
+        except (OSError, ValueError, RuntimeError):
+            invalid.append(name)
+    return sorted(blocked), invalid
+
+
+def _check_isolated_destination(source, destination, *, source_identity=None):
+    """Use directory identities, not path spelling, for source containment."""
+    current_source = source.stat()
+    if source_identity is not None and not os.path.samestat(source_identity, current_source):
+        raise ValueError('source_directory_changed')
+    if any(path.is_symlink() for path in [destination, *destination.parents]):
+        raise ValueError('destination_symlink')
+    if destination == source or source in destination.parents or destination in source.parents:
+        raise ValueError('destination_overlap')
+    for ancestor in [destination, *destination.parents]:
+        try:
+            info = ancestor.stat()
+        except FileNotFoundError:
+            continue
+        if os.path.samestat(current_source, info):
+            raise ValueError('destination_overlap')
+    if destination.exists():
+        raise ValueError('destination_in_use')
+    if not destination.parent.is_dir():
+        raise ValueError('destination_parent_missing')
+    return current_source
+
+
+def _isolated_source_binding(hint, *, env, deadline):
+    """Bind Git discovery to the worktree and both metadata directories."""
+    def query(option):
+        return _isolated_git(hint, ['rev-parse', option], env=env, deadline=deadline)
+    bare = query('--is-bare-repository') == 'true'
+    git_dir = Path(query('--absolute-git-dir')).resolve(strict=True)
+    if bare:
+        root = git_dir
+    else:
+        if query('--is-inside-work-tree') != 'true':
+            raise ValueError('source_worktree_required')
+        root = Path(query('--show-toplevel')).resolve(strict=True)
+    common = Path(query('--git-common-dir'))
+    common = (hint / common).resolve(strict=True)
+    return root, git_dir, common
+
+
+def start_isolated(args):
+    """Start new work without consulting or locking the source OMC state.
+
+    This creates a workspace, not an arbitrary-command sandbox. Setup and verify
+    remain blocked until their execution boundary is independently established.
+    """
+    destination = Path(os.path.abspath(args.destination))
+    result = {'workspace_route': 'ISOLATED', 'clone_path': str(destination),
+              'source_governance': 'NOT_CHECKED', 'source_execution': 'NOT_CHECKED',
+              'registration': 'not_started'}
+    phase = 'prepare'
+    try:
+        if not math.isfinite(args.timeout_sec) or not 0 < args.timeout_sec <= 600:
+            raise ValueError('invalid_timeout')
+        if not args.request.strip():
+            raise ValueError('request_required')
+        deadline = time.monotonic() + args.timeout_sec
+        source = args.source.resolve(strict=True)
+        env = _isolated_environment()
+        binding = _isolated_source_binding(source, env=env, deadline=deadline)
+        source = binding[0]
+        identities = [_check_isolated_destination(root, destination) for root in binding]
+        result['source_root'] = str(source)
+        baseline = args.baseline or 'HEAD'
+        if args.baseline and not re.fullmatch(r'[0-9a-f]{40}|[0-9a-f]{64}', baseline):
+            raise ValueError('baseline_oid_required')
+        oid = _isolated_git(source, ['rev-parse', '--verify', baseline + '^{commit}'],
+                            env=env, deadline=deadline)
+        if not re.fullmatch(r'[0-9a-f]{40}|[0-9a-f]{64}', oid):
+            raise ValueError('source_oid_invalid')
+        result['baseline_oid'] = oid
+        # Exclusive reservation belongs to this entry; partial destinations are
+        # retained on failure and never reset, reused, or automatically deleted.
+        current_binding = _isolated_source_binding(source, env=env, deadline=deadline)
+        for original, current, identity in zip(binding, current_binding, identities):
+            if current != original:
+                raise ValueError('source_directory_changed')
+            _check_isolated_destination(current, destination, source_identity=identity)
+        destination.mkdir(mode=0o700)
+        _isolated_git(destination, ['clone', '--no-hardlinks', '--dissociate', '--no-checkout', '--',
+                                   str(source), str(destination)],
+                      env=env, deadline=deadline, limit=60)
+        _isolated_git(destination, ['checkout', '--detach', oid], env=env, deadline=deadline)
+        if not (destination / '.git').is_dir() or (destination / '.git').is_symlink():
+            raise ValueError('destination_git_not_independent')
+        common = _isolated_git(destination, ['rev-parse', '--git-common-dir'], env=env, deadline=deadline)
+        if (destination / common).resolve() != destination / '.git':
+            raise ValueError('destination_common_dir_shared')
+        if _isolated_git(destination, ['rev-parse', 'HEAD'], env=env, deadline=deadline) != oid:
+            raise ValueError('destination_head_mismatch')
+        # Committed runtime metadata cannot be mistaken for fresh governance.
+        omc = destination / '.omc'
+        if omc.is_symlink() or any((omc / name).is_symlink() or (omc / name).exists()
+                                  for name in ('state', 'pipeline_session.json', 'edit-resumptions',
+                                               'observations', 'observation-policy.json', 'isolated-entry.json')):
+            raise ValueError('destination_runtime_state_present')
+        if any((omc / name).is_symlink() for name in
+               ('project-memory.json', 'policy.json', 'notepad.md', 'summary.md', 'hooks.json')):
+            raise ValueError('destination_runtime_state_present')
+        if (destination / '.git/objects/info/alternates').exists():
+            raise ValueError('destination_objects_shared')
+        blocked, invalid = _isolated_paths(destination, args.write_path, deadline=deadline)
+        result.update(blocked_edit_paths=blocked,
+                      write_paths=[Path(name).as_posix() for name in args.write_path],
+                      stages={
+                          'READ': {'status': 'allowed', 'reason': 'clone_ready_no_external_link_traversal'},
+                          'EDIT': {'status': 'blocked' if invalid else 'allowed' if args.write_path else 'needs_scope',
+                                   'reason': 'unsafe_write_path' if invalid else 'contract_required', 'requires_contract': True},
+                          'SETUP': {'status': 'blocked', 'reason': 'execution_boundary_not_attested'},
+                          'VERIFY': {'status': 'blocked', 'reason': 'execution_boundary_not_attested'},
+                      })
+        phase = 'register'
+        # Trusted external kit, never the clone's checked-out Python or hooks.
+        _isolated_run([sys.executable, '-I', str(Path(__file__).resolve().with_name('omc_state.py')),
+                       'init', '--target', str(destination)], cwd=destination, env=env,
+                      deadline=deadline, limit=30)
+        _isolated_run([
+            sys.executable, '-I', str(Path(__file__).resolve()), 'sync-require',
+            '--target', str(destination), '--mode', 'autopilot', '--title', 'omc-task',
+            '--request', args.request, '--roles', 'senior_coding', '--work-class', 'implementation',
+            '--completion-action', 'start', '--for', 'task'],
+            cwd=destination, env=env, deadline=deadline, limit=30)
+        pending = json.loads((omc / 'state/pending-completion.json').read_text())
+        result.update(registration='started', session_id=pending['session_id'], work_id=pending['work_id'])
+        with (omc / 'isolated-entry.json').open('x', encoding='utf-8') as stream:
+            stream.write(json.dumps(result, ensure_ascii=False, indent=2))
+        print(json.dumps(result, ensure_ascii=False))
+        return 0
+    except subprocess.TimeoutExpired:
+        result.update(reason_code='preparation_timeout', failure_stage=phase)
+        code = 2
+    except FileExistsError:
+        result.update(reason_code='destination_in_use', failure_stage=phase)
+        code = 1
+    except subprocess.CalledProcessError as exc:
+        result.update(reason_code='registration_failed' if phase == 'register' else 'git_preparation_failed',
+                      failure_stage=phase, native_exit=exc.returncode)
+        code = 2
+    except (OSError, ValueError, KeyError, TypeError, RuntimeError) as exc:
+        result.update(reason_code=str(exc) if isinstance(exc, ValueError) else 'preparation_unavailable',
+                      failure_stage=phase)
+        code = 1 if isinstance(exc, ValueError) else 2
+    print(json.dumps(result, ensure_ascii=False))
+    return code
+
+
 def _parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(description="Block execution unless the latest OMC session is confirmed.")
     sub = ap.add_subparsers(dest="command", required=True)
+
+    isolated = sub.add_parser('start-isolated', help='Start independent work without reading source OMC state.')
+    isolated.add_argument('--source', type=Path, required=True)
+    isolated.add_argument('--destination', type=Path, required=True)
+    isolated.add_argument('--request', required=True)
+    isolated.add_argument('--baseline', help='Optional exact commit OID; defaults to the source HEAD.')
+    isolated.add_argument('--write-path', action='append', default=[])
+    isolated.add_argument('--timeout-sec', type=float, default=120)
 
     sync_require = sub.add_parser(
         "sync-require",
@@ -470,6 +712,8 @@ def _parser() -> argparse.ArgumentParser:
 
 def main() -> int:
     args = _parser().parse_args()
+    if args.command == 'start-isolated':
+        return start_isolated(args)
     project_root = omc_utils.project_root(args.target)
     if args.command == "sync-require":
         role_ids = [x.strip() for x in args.roles.split(",") if x.strip()]

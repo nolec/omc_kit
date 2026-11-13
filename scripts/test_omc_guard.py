@@ -1308,3 +1308,443 @@ def test_t1_sync_frozen_work_returns_diagnosis_without_new_session(tmp_path):
     assert '동결' in result.stdout and 'Traceback' not in result.stderr
     assert (root/'.omc/state/latest.json').read_bytes()==before
     assert list((root/'.omc/state/sessions').iterdir())==members
+
+
+# Independent entry V0: the source governance is not an entry dependency.
+def _isolated_entry(source, destination, *extra, env=None):
+    return subprocess.run([sys.executable, str(GUARD), 'start-isolated',
+                           '--source', str(source), '--destination', str(destination),
+                           '--request', 'independent fixture implementation', *extra],
+                          capture_output=True, text=True, env=env, timeout=30)
+
+
+def test_isolated_entry_new_work_without_source_governance(tmp_path):
+    source = tmp_path / 'source'; _init_git_repo(source)
+    (source/'.omc').mkdir(); (source/'.omc/pipeline_session.json').write_text('malformed')
+    (source/'app.py').write_text('unfinished source change\n')
+    subprocess.run(['git','-C',str(source),'add','app.py'],check=True)
+    before = (source/'.git/index').read_bytes()
+    destination = tmp_path/'new'
+    result = _isolated_entry(source,destination,'--write-path','app.py')
+    assert result.returncode == 0, result.stdout+result.stderr
+    data = json.loads(result.stdout)
+    assert data['source_governance'] == data['source_execution'] == 'NOT_CHECKED'
+    assert data['workspace_route'] == 'ISOLATED'
+    assert (destination/'.git').is_dir()
+    assert (destination/'app.py').read_text() == 'value = 1\n'
+    assert (source/'app.py').read_text() == 'unfinished source change\n'
+    assert (source/'.git/index').read_bytes() == before
+    assert (source/'.omc/pipeline_session.json').read_text() == 'malformed'
+    pending=json.loads((destination/'.omc/state/pending-completion.json').read_text())
+    assert pending['work_id'] == data['work_id'] and data['session_id'] == pending['session_id']
+    state=json.loads((destination/'.omc/pipeline_session.json').read_text())
+    assert not state['contract_confirmed'] and not state['red_done_tests']
+    assert data['stages']['READ']['status'] == data['stages']['EDIT']['status'] == 'allowed'
+    assert data['stages']['VERIFY']['status'] == 'blocked'
+
+
+def test_isolated_entry_does_not_wait_for_source_lock(tmp_path):
+    import fcntl,time
+    source=tmp_path/'source';_init_git_repo(source)
+    folder=source/'.omc/state';folder.mkdir(parents=True)
+    with (folder/'.lock').open('w') as stream:
+        fcntl.flock(stream,fcntl.LOCK_EX|fcntl.LOCK_NB)
+        started=time.monotonic()
+        result=_isolated_entry(source,tmp_path/'new','--timeout-sec','5')
+    assert result.returncode == 0, result.stdout+result.stderr
+    assert time.monotonic()-started < 5
+    assert json.loads(result.stdout)['stages']['EDIT']['status']=='needs_scope'
+
+
+@pytest.mark.parametrize('relation', ['same','inside','ancestor','existing','symlink'])
+def test_isolated_entry_rejects_unsafe_destination(tmp_path,relation):
+    source=tmp_path/'source';_init_git_repo(source)
+    destination={'same':source,'inside':source/'new','ancestor':tmp_path}.get(relation,tmp_path/'new')
+    if relation=='existing': destination.mkdir();(destination/'keep').write_text('preserve')
+    if relation=='symlink': destination.symlink_to(source,target_is_directory=True)
+    result=_isolated_entry(source,destination)
+    assert result.returncode == 1, result.stdout+result.stderr
+    assert json.loads(result.stdout)['reason_code'].startswith('destination_')
+    if relation=='existing': assert (destination/'keep').read_text()=='preserve'
+
+
+def test_isolated_entry_external_link_only_blocks_its_edit(tmp_path):
+    source=tmp_path/'source';_init_git_repo(source)
+    (source/'external.py').symlink_to(source/'app.py')
+    subprocess.run(['git','-C',str(source),'add','external.py'],check=True)
+    subprocess.run(['git','-C',str(source),'commit','-qm','link fixture'],check=True)
+    result=_isolated_entry(source,tmp_path/'new','--write-path','app.py')
+    assert result.returncode == 0,result.stdout+result.stderr
+    value=json.loads(result.stdout)
+    assert 'external.py' in value['blocked_edit_paths']
+    assert value['stages']['EDIT']['status']=='allowed'
+    blocked=_isolated_entry(source,tmp_path/'other','--write-path','external.py')
+    assert blocked.returncode == 0,blocked.stdout+blocked.stderr
+    assert json.loads(blocked.stdout)['stages']['EDIT']['status']=='blocked'
+
+
+def test_isolated_entry_disables_injected_checkout_filter(tmp_path):
+    import os
+    source=tmp_path/'source';_init_git_repo(source)
+    (source/'.gitattributes').write_text('app.py filter=outside\n')
+    subprocess.run(['git','-C',str(source),'add','.gitattributes'],check=True)
+    subprocess.run(['git','-C',str(source),'commit','-qm','filter fixture'],check=True)
+    marker=tmp_path/'must-not-write'
+    env=dict(os.environ,GIT_CONFIG_COUNT='1',GIT_CONFIG_KEY_0='filter.outside.smudge',
+             GIT_CONFIG_VALUE_0='touch '+str(marker))
+    result=_isolated_entry(source,tmp_path/'new',env=env)
+    assert result.returncode == 0,result.stdout+result.stderr
+    assert not marker.exists()
+
+
+def test_isolated_entry_timeout_keeps_partial_destination(tmp_path,monkeypatch,capsys):
+    import argparse,omc_guard as runtime
+    source=tmp_path/'source';_init_git_repo(source)
+    def stalled(*args,**kwargs): raise subprocess.TimeoutExpired(args[0],.01)
+    monkeypatch.setattr(runtime.subprocess,'run',stalled)
+    args=argparse.Namespace(source=source,destination=tmp_path/'new',request='fixture',
+                            baseline=None,write_path=[],timeout_sec=.01)
+    assert runtime.start_isolated(args)==2
+    assert json.loads(capsys.readouterr().out)['reason_code']=='preparation_timeout'
+
+
+def test_isolated_entry_rejects_destination_reuse(tmp_path):
+    source=tmp_path/'source';_init_git_repo(source)
+    destination=tmp_path/'new'
+    assert _isolated_entry(source,destination).returncode==0
+    before=(destination/'.omc/state/pending-completion.json').read_bytes()
+    second=_isolated_entry(source,destination)
+    assert second.returncode==1
+    assert (destination/'.omc/state/pending-completion.json').read_bytes()==before
+
+
+
+def test_isolated_entry_dissociates_borrowed_objects(tmp_path):
+    pool=tmp_path/'pool';_init_git_repo(pool)
+    source=tmp_path/'source'
+    subprocess.run(['git','clone','--shared','--quiet',str(pool),str(source)],check=True)
+    result=_isolated_entry(source,tmp_path/'new')
+    assert result.returncode==0,result.stdout+result.stderr
+    assert not (tmp_path/'new/.git/objects/info/alternates').exists()
+
+
+def test_isolated_entry_scan_obeys_total_deadline(tmp_path):
+    import time,omc_guard as runtime
+    (tmp_path/'file.py').write_text('value=1\n')
+    with pytest.raises(subprocess.TimeoutExpired):
+        runtime._isolated_paths(tmp_path,[],deadline=time.monotonic()-1)
+
+
+
+def test_isolated_entry_pins_oid_while_source_changes(tmp_path,monkeypatch,capsys):
+    import argparse,omc_guard as runtime
+    source=tmp_path/'source';_init_git_repo(source)
+    oid=subprocess.check_output(['git','-C',str(source),'rev-parse','HEAD'],text=True).strip()
+    original=runtime._isolated_git
+    changed=False
+    def concurrent_change(root,arguments,**kwargs):
+        nonlocal changed
+        value=original(root,arguments,**kwargs)
+        if root==source and arguments[:2]==['rev-parse','--verify'] and not changed:
+            changed=True
+            (source/'app.py').write_text('value = 9\n')
+            subprocess.run(['git','-C',str(source),'add','app.py'],check=True)
+            subprocess.run(['git','-C',str(source),'commit','-qm','concurrent user change'],check=True)
+        return value
+    monkeypatch.setattr(runtime,'_isolated_git',concurrent_change)
+    args=argparse.Namespace(source=source,destination=tmp_path/'new',request='fixture',
+                            baseline=None,write_path=['app.py'],timeout_sec=20)
+    assert runtime.start_isolated(args)==0
+    value=json.loads(capsys.readouterr().out)
+    assert value['baseline_oid']==oid
+    assert (tmp_path/'new/app.py').read_text()=='value = 1\n'
+    assert (source/'app.py').read_text()=='value = 9\n'
+
+
+def test_isolated_entry_concurrent_destination_has_one_owner(tmp_path):
+    source=tmp_path/'source';_init_git_repo(source)
+    destination=tmp_path/'new'
+    argv=[sys.executable,str(GUARD),'start-isolated','--source',str(source),
+          '--destination',str(destination),'--request','fixture']
+    children=[subprocess.Popen(argv,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True) for _ in range(2)]
+    outputs=[child.communicate(timeout=30) for child in children]
+    assert sorted(child.returncode for child in children)==[0,1],outputs
+    assert len(list((destination/'.omc/state/sessions').iterdir()))==1
+
+
+def test_isolated_entry_leaves_existing_execution_alive(tmp_path):
+    source=tmp_path/'source';_init_git_repo(source)
+    child=subprocess.Popen([sys.executable,'-c','import time;time.sleep(15)'])
+    try:
+        folder=source/'.omc/state/runs';folder.mkdir(parents=True)
+        (folder/'old.json').write_text(json.dumps({'status':'running','pid':child.pid}))
+        result=_isolated_entry(source,tmp_path/'new')
+        assert result.returncode==0,result.stdout+result.stderr
+        assert child.poll() is None
+    finally:
+        child.terminate();child.wait(timeout=10)
+
+
+def test_isolated_entry_fresh_evidence_and_incomplete_gate(tmp_path):
+    import hashlib
+    source=tmp_path/'source';_init_git_repo(source)
+    destination=tmp_path/'new'
+    entry=_isolated_entry(source,destination,'--write-path','app.py','--write-path','test_app.py')
+    assert entry.returncode==0,entry.stdout+entry.stderr
+    data=json.loads(entry.stdout)
+    assert data['stages']['VERIFY']['status']=='blocked'
+    script=GUARD.with_name('omc_pipeline_guard.py')
+    def pipeline(*args):
+        return subprocess.run([sys.executable,str(script),'--target',str(destination),*args],
+                              capture_output=True,text=True,timeout=30)
+    sid=data['session_id']
+    proposal={'session_id':sid,'revision':1,'request':'fixture own implementation',
+              'approval_reference':'explicit fixture approval','checks':[{'id':'tests','target':'app.py',
+              'method':'python -m pytest test_app.py -q','pass_condition':'pass','target_version':data['baseline_oid']}]}
+    approved=destination/'.omc/checks.json';approved.write_text(json.dumps(proposal))
+    assert pipeline('approve-checks','--file',str(approved)).returncode==0
+    assert pipeline('contract-done','--required-checks','tests').returncode==0
+    test=destination/'test_app.py';test.write_text('from app import value\ndef test_value():\n    assert value == 2\n')
+    argv=[sys.executable,'-m','pytest','test_app.py','-q']
+    red=subprocess.run(argv,cwd=destination,capture_output=True,text=True,timeout=30)
+    assert red.returncode==1 and 'assert 1 == 2' in red.stdout
+    output=destination/'.omc/red.txt';output.write_text(red.stdout+red.stderr)
+    state=json.loads((destination/'.omc/pipeline_session.json').read_text())
+    evidence={'session_id':sid,'basis_sha256':state['basis_sha256'],'test_file':'test_app.py',
+              'test_sha256':hashlib.sha256(test.read_bytes()).hexdigest(),'check_id':'tests',
+              'case_id':'test_value','expected_failure':'value should be 2','command':' '.join(argv),
+              'exit_code':red.returncode,'baseline_failed_cases':[],'failed_cases':['test_value'],
+              'output_file':'.omc/red.txt','output_sha256':hashlib.sha256(output.read_bytes()).hexdigest()}
+    path=destination/'.omc/red.json';path.write_text(json.dumps(evidence))
+    assert pipeline('red-done','test_app.py','--evidence-file',str(path)).returncode==0
+    (destination/'app.py').write_text('value = 2\n')
+    green=subprocess.run(argv,cwd=destination,capture_output=True,text=True,timeout=30)
+    assert green.returncode==0,green.stdout+green.stderr
+    subprocess.run(['git','-C',str(destination),'add','app.py','test_app.py'],check=True)
+    template=pipeline('verification-template');assert template.returncode==0,template.stdout
+    verification=json.loads(template.stdout)
+    verification['implementation']={'status':'applied','evidence':'fixture app.py value=2'}
+    verification['checks']['tests'].update(status='unrun',evidence='entry success is not verification success')
+    target=destination/'.omc/verification.json';target.write_text(json.dumps(verification))
+    incomplete=pipeline('complete-task','--verification-file',str(target))
+    assert incomplete.returncode==1 and incomplete.stdout.startswith('구현됨·검증 미완료')
+    verification['checks']['tests'].update(status='passed',evidence=green.stdout)
+    target.write_text(json.dumps(verification))
+    completed=pipeline('complete-task','--verification-file',str(target))
+    assert completed.returncode==0,completed.stdout+completed.stderr
+    assert completed.stdout.startswith('필수 검증 통과·작업 완료')
+    assert not (source/'.omc').exists()
+
+
+
+def test_isolated_entry_does_not_edit_reserved_metadata_via_link(tmp_path):
+    source=tmp_path/'source';_init_git_repo(source)
+    (source/'alias.py').symlink_to('.git/config')
+    subprocess.run(['git','-C',str(source),'add','alias.py'],check=True)
+    subprocess.run(['git','-C',str(source),'commit','-qm','reserved link fixture'],check=True)
+    result=_isolated_entry(source,tmp_path/'new','--write-path','alias.py')
+    assert result.returncode==0,result.stdout+result.stderr
+    assert json.loads(result.stdout)['stages']['EDIT']['status']=='blocked'
+
+
+
+def test_isolated_entry_scans_nested_metadata_named_link(tmp_path):
+    source=tmp_path/'source';_init_git_repo(source)
+    (source/'folder').mkdir();(source/'folder/.omc').symlink_to(source,target_is_directory=True)
+    subprocess.run(['git','-C',str(source),'add','folder/.omc'],check=True)
+    subprocess.run(['git','-C',str(source),'commit','-qm','nested link fixture'],check=True)
+    result=_isolated_entry(source,tmp_path/'new','--write-path','folder')
+    assert result.returncode==0,result.stdout+result.stderr
+    value=json.loads(result.stdout)
+    assert 'folder/.omc' in value['blocked_edit_paths']
+    assert value['stages']['EDIT']['status']=='blocked'
+
+
+
+def test_isolated_entry_does_not_import_clone_python_shadow(tmp_path):
+    import os
+    source=tmp_path/'source';_init_git_repo(source)
+    marker=tmp_path/'unexpected-import'
+    (source/'subprocess.py').write_text('from pathlib import Path\nPath('+repr(str(marker))+').write_text("unsafe clone import")\nraise RuntimeError("shadow import")\n')
+    subprocess.run(['git','-C',str(source),'add','subprocess.py'],check=True)
+    subprocess.run(['git','-C',str(source),'commit','-qm','shadow fixture'],check=True)
+    result=_isolated_entry(source,tmp_path/'new',env=dict(os.environ,PYTHONPATH='.'))
+    assert not marker.exists(),result.stdout+result.stderr
+    assert result.returncode==0,result.stdout+result.stderr
+
+
+def test_isolated_entry_does_not_inherit_previous_resume_context(tmp_path):
+    import os
+    source=tmp_path/'source';_init_git_repo(source)
+    env=dict(os.environ,OMC_EDIT_RESUME_CONTEXT='{"path":"unrelated-old-context","sha256":"invalid"}')
+    result=_isolated_entry(source,tmp_path/'new',env=env)
+    assert result.returncode==0,result.stdout+result.stderr
+    value=json.loads(result.stdout)
+    assert value['registration']=='started'
+
+
+def test_isolated_entry_supports_isolated_python_invocation(tmp_path):
+    source=tmp_path/'source';_init_git_repo(source)
+    result=subprocess.run([sys.executable,'-I',str(GUARD),'start-isolated',
+                           '--source',str(source),'--destination',str(tmp_path/'new'),
+                           '--request','fixture'],capture_output=True,text=True,timeout=30)
+    assert result.returncode==0,result.stdout+result.stderr
+    assert json.loads(result.stdout)['registration']=='started'
+
+
+
+@pytest.mark.parametrize('name',['isolated-entry.json','project-memory.json','policy.json'])
+def test_isolated_entry_rejects_runtime_metadata_alias_before_registration(tmp_path,name):
+    source=tmp_path/'source';_init_git_repo(source)
+    (source/'.omc').mkdir();(source/'.omc'/name).symlink_to(source/'app.py')
+    subprocess.run(['git','-C',str(source),'add','.omc/'+name],check=True)
+    subprocess.run(['git','-C',str(source),'commit','-qm','runtime alias fixture'],check=True)
+    before=(source/'app.py').read_bytes()
+    result=_isolated_entry(source,tmp_path/'new')
+    assert (source/'app.py').read_bytes()==before,result.stdout+result.stderr
+    assert result.returncode==1,result.stdout+result.stderr
+    assert json.loads(result.stdout)['reason_code']=='destination_runtime_state_present'
+    assert not (tmp_path/'new/.omc/state').exists()
+
+
+
+@pytest.mark.parametrize('source_spelling,destination_spelling', [('Source','source'),('source','Source')])
+def test_isolated_entry_case_alias_cannot_create_inside_source(tmp_path,source_spelling,destination_spelling):
+    source=tmp_path/'Source';_init_git_repo(source)
+    if not (tmp_path/'source').exists():
+        pytest.skip('requires a case-insensitive filesystem')
+    destination=tmp_path/destination_spelling/'inside'
+    before=(source/'.git/index').read_bytes()
+    result=_isolated_entry(tmp_path/source_spelling,destination)
+    assert result.returncode==1,result.stdout+result.stderr
+    assert json.loads(result.stdout)['reason_code']=='destination_overlap'
+    assert not (source/'inside').exists()
+    assert (source/'.git/index').read_bytes()==before
+
+
+@pytest.mark.parametrize('spelling',['folder','./folder','folder//','./folder//','FOLDER','./FOLDER'])
+def test_isolated_entry_equivalent_scope_spellings_cannot_skip_links(tmp_path,spelling):
+    source=tmp_path/'source';_init_git_repo(source)
+    (source/'folder').mkdir();(source/'folder/link.py').symlink_to(source/'app.py')
+    subprocess.run(['git','-C',str(source),'add','folder/link.py'],check=True)
+    subprocess.run(['git','-C',str(source),'commit','-qm','scope spelling fixture'],check=True)
+    aliases_existing_folder=(source/spelling).is_dir()
+    result=_isolated_entry(source,tmp_path/'new','--write-path',spelling)
+    assert result.returncode==0,result.stdout+result.stderr
+    value=json.loads(result.stdout)
+    assert value['stages']['EDIT']['status']==('blocked' if aliases_existing_folder else 'allowed')
+    assert value['write_paths']==[Path(spelling).as_posix()]
+    assert (source/'app.py').read_text()=='value = 1\n'
+
+
+@pytest.mark.parametrize('spelling',['folder/good.py','./folder//good.py','folder/new.py'])
+def test_isolated_entry_normalized_ordinary_scope_stays_allowed(tmp_path,spelling):
+    source=tmp_path/'source';_init_git_repo(source)
+    (source/'folder').mkdir();(source/'folder/good.py').write_text('value=1\n')
+    (source/'folder/link.py').symlink_to(source/'app.py')
+    subprocess.run(['git','-C',str(source),'add','folder'],check=True)
+    subprocess.run(['git','-C',str(source),'commit','-qm','ordinary scope fixture'],check=True)
+    result=_isolated_entry(source,tmp_path/'new','--write-path',spelling)
+    assert result.returncode==0,result.stdout+result.stderr
+    value=json.loads(result.stdout)
+    assert value['stages']['EDIT']['status']=='allowed'
+    assert value['write_paths']==[Path(spelling).as_posix()]
+
+
+def test_isolated_entry_rechecks_destination_before_reservation(tmp_path,monkeypatch,capsys):
+    import argparse,omc_guard as runtime
+    source=tmp_path/'Source';_init_git_repo(source)
+    parent=tmp_path/'outside';parent.mkdir()
+    original=runtime._isolated_git
+    changed=False
+    def replace_parent(root,arguments,**kwargs):
+        nonlocal changed
+        value=original(root,arguments,**kwargs)
+        if root==source and arguments[:2]==['rev-parse','--verify'] and not changed:
+            changed=True;parent.rmdir();parent.symlink_to(source,target_is_directory=True)
+        return value
+    monkeypatch.setattr(runtime,'_isolated_git',replace_parent)
+    args=argparse.Namespace(source=source,destination=parent/'inside',request='fixture',
+                            baseline=None,write_path=[],timeout_sec=20)
+    assert runtime.start_isolated(args)==1
+    value=json.loads(capsys.readouterr().out)
+    assert value['reason_code']=='destination_symlink'
+    assert not (source/'inside').exists()
+
+
+
+@pytest.mark.parametrize('hint,reason',[('.git','source_worktree_required'),('folder','destination_overlap')])
+def test_isolated_entry_binds_source_root_before_creating_destination(tmp_path,hint,reason):
+    source=tmp_path/'source';_init_git_repo(source)
+    (source/'folder').mkdir();(source/'folder/file.txt').write_text('fixture')
+    subprocess.run(['git','-C',str(source),'add','folder'],check=True)
+    subprocess.run(['git','-C',str(source),'commit','-qm','subdirectory fixture'],check=True)
+    destination=source/'inside'
+    result=_isolated_entry(source/hint,destination)
+    assert not destination.exists(),result.stdout+result.stderr
+    assert result.returncode==1,result.stdout+result.stderr
+    assert json.loads(result.stdout)['reason_code']==reason
+
+
+def test_isolated_entry_subdirectory_source_starts_from_worktree_root(tmp_path):
+    source=tmp_path/'source';_init_git_repo(source)
+    (source/'folder').mkdir();(source/'folder/file.txt').write_text('fixture')
+    subprocess.run(['git','-C',str(source),'add','folder'],check=True)
+    subprocess.run(['git','-C',str(source),'commit','-qm','subdirectory fixture'],check=True)
+    result=_isolated_entry(source/'folder',tmp_path/'new','--write-path','app.py')
+    assert result.returncode==0,result.stdout+result.stderr
+    assert (tmp_path/'new/app.py').read_text()=='value = 1\n'
+    assert Path(json.loads(result.stdout)['source_root']).samefile(source)
+
+
+@pytest.mark.parametrize('inside',[False,True])
+def test_isolated_entry_bare_source_keeps_safe_boundary(tmp_path,inside):
+    source=tmp_path/'source';_init_git_repo(source)
+    bare=tmp_path/'bare.git'
+    subprocess.run(['git','clone','--bare','--quiet',str(source),str(bare)],check=True)
+    destination=bare/'inside' if inside else tmp_path/'new'
+    result=_isolated_entry(bare,destination)
+    assert result.returncode==(1 if inside else 0),result.stdout+result.stderr
+    if inside:
+        assert not destination.exists()
+        assert json.loads(result.stdout)['reason_code']=='destination_overlap'
+    else:
+        assert (destination/'app.py').read_text()=='value = 1\n'
+
+
+@pytest.mark.parametrize('metadata',['--absolute-git-dir','--git-common-dir'])
+def test_isolated_entry_linked_worktree_protects_shared_git_metadata(tmp_path,metadata):
+    source=tmp_path/'source';_init_git_repo(source)
+    linked=tmp_path/'linked'
+    subprocess.run(['git','-C',str(source),'worktree','add','--detach','--quiet',str(linked),'HEAD'],check=True)
+    raw=subprocess.check_output(['git','-C',str(linked),'rev-parse',metadata],text=True).strip()
+    root=Path(raw) if Path(raw).is_absolute() else linked/raw
+    destination=root/'inside'
+    result=_isolated_entry(linked,destination)
+    assert not destination.exists(),result.stdout+result.stderr
+    assert result.returncode==1,result.stdout+result.stderr
+    assert json.loads(result.stdout)['reason_code']=='destination_overlap'
+
+
+def test_isolated_entry_rechecks_repository_binding_before_creation(tmp_path,monkeypatch,capsys):
+    import argparse,omc_guard as runtime
+    source=tmp_path/'source';_init_git_repo(source)
+    alternate=tmp_path/'alternate'
+    subprocess.run(['git','clone','--no-hardlinks','--quiet',str(source),str(alternate)],check=True)
+    original=runtime._isolated_git
+    switched=False
+    def switch_git_directory(root,arguments,**kwargs):
+        nonlocal switched
+        value=original(root,arguments,**kwargs)
+        if root==source and arguments[:2]==['rev-parse','--verify'] and not switched:
+            switched=True
+            (source/'.git').rename(tmp_path/'retired.git')
+            (source/'.git').write_text('gitdir: '+str(alternate/'.git')+'\n')
+        return value
+    monkeypatch.setattr(runtime,'_isolated_git',switch_git_directory)
+    destination=alternate/'.git/inside'
+    args=argparse.Namespace(source=source,destination=destination,request='fixture',
+                            baseline=None,write_path=[],timeout_sec=20)
+    assert runtime.start_isolated(args)==1
+    assert not destination.exists()
+    assert json.loads(capsys.readouterr().out)['reason_code']=='source_directory_changed'
