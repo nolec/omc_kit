@@ -14,20 +14,26 @@
 
 ## 세션 시작 시 자동 실행 (MANDATORY)
 
-**모든 AI 에이전트는 대화를 시작하면 가장 먼저 아래 명령을 실행해야 합니다. 사용자 요청을 처리하기 전에 반드시 완료해야 합니다.**
+<!-- OMC_CODEX_READ_ONLY_BOOTSTRAP -->
+**Codex는 요청을 받기 전 원본에서 state init·session_start를 실행하지 않습니다.**
+시작 훅이 미발화해도 수동 초기화로 돌아가지 않습니다. 상태/계획 조회는 읽기만 합니다.
+새 구현 요청은 신뢰하는 kit의 `python3 -I -B scripts/omc.py workspace-entry --intent start --source <원본> --request <요청> [--parent <승인된외부부모>]`로 준비하며 실행기가 고유 경로를 고릅니다.
+반환된 ticket 경로·SHA와 workspace/work/session binding을 보존합니다. 같은 요청의 재전달·조회는 같은 ticket을 사용합니다.
+`WORKSPACE_READY`는 공간 준비이며 편집·설치·검증·전체 작업 완료가 아닙니다. 준비된 공간에서 새 CONTRACT→테스트 작성→실제 RED→구현 순서를 따릅니다.
+계속 요청은 기존 ticket과 명시 workspace/work ID로만 연결하고, 모호하면 작업 식별만 확인합니다. 원본 상태를 복구하거나 새 작업으로 몰래 바꾸지 않습니다.
 
+Codex 이외 실행기는 기존 시작 절차를 유지합니다:
 ```bash
-OMC_EXECUTOR=codex python3 scripts/omc.py state init --target . && \
-OMC_EXECUTOR=codex python3 scripts/omc.py hook session_start --target .
+python3 scripts/omc.py state init --target . && \
+python3 scripts/omc.py hook session_start --target .
 ```
 
-> Cursor는 `.cursor/hooks.json`, Claude Code는 `.claude/settings.json`, Gemini CLI는 `.gemini/settings.json`, Codex는 `.codex/hooks.json`의 `SessionStart` 훅이 이를 자동 처리합니다.
-> 훅이 실행되지 않는 환경에서는 AI가 직접 위 명령을 실행합니다.
+---
 
 ## AI 도구 우회 절대 금지 (CRITICAL)
 
 **모든 AI는 `replace_file_content`나 `write_to_file` 등 파일 제어 도구를 사용해 코드를 직접 수정하기 전에, 반드시 `python3 scripts/omc.py state status`를 통해 현재 OMC 세션이 사용자의 요청 문맥과 동기화되어 있는지 확인해야 합니다.**
-동기화되어 있지 않다면 반드시 `omc.py state init` 및 `session_start`를 실행하세요. OMC 파이프라인(TDD 게이트 등)을 거치지 않고 LLM 도구로 파일만 조용히 수정하는 행위는 시스템 파괴로 간주됩니다.
+Codex에서 동기화되지 않았다면 원본 초기화 대신 workspace-entry의 새 작업/이어가기 binding을 확인하세요. 다른 실행기는 `omc.py state init` 및 `session_start`를 사용합니다. OMC 파이프라인(TDD 게이트 등)을 거치지 않고 LLM 도구로 파일만 조용히 수정하는 행위는 시스템 파괴로 간주됩니다.
 
 
 ## 코딩 작업 자동 파이프라인 (MANDATORY — 모든 LLM 공통)

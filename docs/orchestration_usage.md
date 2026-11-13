@@ -497,3 +497,52 @@ python3 -I <신뢰하는-kit>/scripts/omc_guard.py start-isolated --source <원�
 대상은 작업 트리·Git 관리 디렉터리·공유 common 디렉터리와 겹칠 수 없습니다.
 기준 커밋 조회 후 디렉터리를 예약하기 직전에 Git 연결과 디렉터리 식별자를 다시 대조합니다.
 이 검사는 검사 시점의 연결을 확인하며 악의적인 동시 파일시스템 변경을 격리하는 샌드박스는 아닙니다.
+
+## Codex 자동 독립 작업 준비 A
+
+Codex의 SessionStart 및 AGENTS 수동 fallback은 읽기 전용 bootstrap입니다.
+사용자 요청 전에는 원본 `.omc` 로그·잠금·세션 초기화를 하지 않습니다.
+요청을 받은 설치 스킬은 새 작업/start, 이어가기/continue, 조회/read를 명시하여
+신뢰하는 kit의 `omc.py workspace-entry`를 내부 호출합니다. 사용자가 `start-isolated`를
+직접 조립할 필요는 없습니다. 설치·원본 반영은 별도이며 개발 checkout 변경만으로
+다른 사용처의 스킬/훅이 자동 갱신되는 것은 아닙니다.
+
+```bash
+python3 -I -B <신뢰하는-kit>/scripts/omc.py workspace-entry --intent start --source <원본> --parent <승인된외부부모> --request "새 작업"
+```
+
+이 명령은 제품 편집·설치·검증 실행기가 아닙니다. `WORKSPACE_READY`는 독립 clone의
+등록 성공이며, 새 CONTRACT·실제 RED·필수 검증이나 전체 작업 완료를 뜻하지 않습니다.
+부모를 생략하면 실제 TMPDIR 아래 사용자별 `omc-workspaces-<uid>`를 사용합니다.
+부모/jobs/job 디렉터리는 현재 사용자 소유 0700이어야 하며 원본이나 Git 관리 영역
+안에는 만들지 않습니다. 같은 부모 아래의 다른 job/workspace는 함께 존재할 수 있습니다.
+기준은 source의 커밋이며 미커밋 파일·과거 승인·RED·기존 실행 종료 인증은 가져오지 않습니다.
+
+반환되는 `ticket_path`, `ticket_sha256`, `workspace`, `work_id`, `session_id`를 부모가
+보존합니다. 같은 ticket 재전달은 같은 준비 결과만 반환합니다. 의미가 비슷한 두 사용자
+문장을 같은 승인으로 병합하지 않습니다. 준비를 분리하려면 `--prepare-only`로 RESERVED
+packet만 발급한 뒤 같은 ticket으로 start합니다. 사용자가 내부 ticket을 직접 입력하는 흐름은 아닙니다.
+
+조회는 `--intent status --ticket <경로> --ticket-sha256 <SHA>`이며 실행하지 않습니다.
+이어가기는 같은 ticket/SHA와 `--intent continue --workspace <경로> --work-id <ID>`가
+현재 pending 작업에 맞아야 하며 새 세션을 만들지 않습니다. pending 소유 세션과 최신 confirmed 세션이 같은 work에 연결되고 실제 세션 기록도 confirmed인지 확인합니다. 반환 `session_id`는 최신 confirmed 세션이며, 최초 준비 세션은 `preparation_session_id`, 현재 pending 소유자는 `pending_owner_session_id`로 구분합니다. 연결이 없거나 불일치하면 UNVERIFIED입니다. 새 작업 등록 직후의 스킬은
+이미 만들어진 work/session을 사용하고 다시 sync-require start하지 않습니다.
+CONTRACT 뒤에는 승인된 테스트 경로를 먼저 작성하고, 실제 실패·RED 등록 뒤 구현합니다.
+테스트 파일명만으로 제품 구현을 우회하는 승인은 생기지 않습니다.
+
+상태는 RESERVED → CLONING → REGISTERING → WORKSPACE_READY이며
+활성 집합은 앞의 세 상태입니다. REGISTERING은 기존 start-isolated가 반환한 등록 결과를
+부모가 확인하는 단계이며 두 번째 세션 등록이 아닙니다. 중복 실행은 job별 비차단 잠금으로
+막습니다. PID/TTL만으로 잠금을 탈취하지 않습니다. boot 조회가 제한되면 boot identity는
+미확인으로 기록하고, 현재 job 잠금 외의 프로세스 생존·종료를 증명했다고 주장하지 않습니다.
+중단 뒤 등록이 실제 확인되면 observed_only 결과를 반환하며 과거 state를 조회로 고치지 않습니다.
+판별 불가·실패·부분 clone은 보존하고 자동 삭제/재실행하지 않습니다. 다른 job은 진행할 수 있습니다.
+
+B(실제 검증 sandbox)와 C(새 의존성 설치)는 아직 미지원입니다. 초기 SETUP/VERIFY의
+NOT_ATTESTED는 실패가 아니라 실행 경계 미검증을 뜻하며 passed로 바꾸지 않습니다.
+일반 채팅 파일 도구의 원본 쓰기를 물리적으로 차단하거나 실제 Codex 모델 준수를
+보장하지 않습니다. 설치 fixture/CLI 회귀와 실제 모델 관찰은 구분합니다.
+
+명시적 재시도는 `--intent start --retry`와 이전 ticket/SHA를 사용합니다. 실패·중단·미확인 상태에만 새 ticket/경로를 예약하고, `origin_job_id`·`retry_of`·증가한 attempt로 연결하며 원래 기준 OID를 유지합니다. 이전 시도별 자식 예약을 먼저 영속화하므로 같은 이전 ticket으로 재전달하거나 동시에 요청해도 같은 자식 ticket/경로만 반환합니다. 예약 중 중단되면 기록된 동일 자식의 미완성 예약만 마저 작성하며, 실행을 자동 재개하지 않습니다. 자식 시도까지 실패한 뒤 다시 시도하려면 그 자식 ticket을 명시합니다. 과거 state/partial/세션은 고치지 않습니다. READY 작업의 새 재시도와 활성 잠금 탈취는 허용하지 않습니다. 재시도도 자동 실행 승인이 아닙니다.
+
+packet·상태·세션 등 JSON 기록과 잠금 파일은 비차단으로 열고 일반 파일인지 확인합니다. FIFO·장치·디렉터리·링크는 준비/조회 근거로 읽지 않고 거부하며, JSON 크기는 1MiB로 제한합니다.

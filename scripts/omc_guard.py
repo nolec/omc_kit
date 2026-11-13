@@ -617,11 +617,11 @@ def start_isolated(args):
                       })
         phase = 'register'
         # Trusted external kit, never the clone's checked-out Python or hooks.
-        _isolated_run([sys.executable, '-I', str(Path(__file__).resolve().with_name('omc_state.py')),
+        _isolated_run([sys.executable, '-I', '-B', str(Path(__file__).resolve().with_name('omc_state.py')),
                        'init', '--target', str(destination)], cwd=destination, env=env,
                       deadline=deadline, limit=30)
         _isolated_run([
-            sys.executable, '-I', str(Path(__file__).resolve()), 'sync-require',
+            sys.executable, '-I', '-B', str(Path(__file__).resolve()), 'sync-require',
             '--target', str(destination), '--mode', 'autopilot', '--title', 'omc-task',
             '--request', args.request, '--roles', 'senior_coding', '--work-class', 'implementation',
             '--completion-action', 'start', '--for', 'task'],

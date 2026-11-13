@@ -58,9 +58,11 @@ if sys.argv[1:3] == ["state", "init"] and "--force" in sys.argv:
     return tmp_path
 
 
+# Legacy context refresh/dedupe remains on Claude; Codex read-only bootstrap
+# is exercised by test_omc_workspace_entry with real source preservation.
 def _run_session_hook(root: Path, payload: dict, **extra_env: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
-        ["bash", str(SESSION_HOOK), "codex"],
+        ["bash", str(SESSION_HOOK), "claude"],
         cwd=root,
         input=json.dumps(payload),
         text=True,
@@ -134,7 +136,7 @@ exit $status
         "OMC_TEST_LOCK_MARKER": str(marker),
     }
     first = subprocess.Popen(
-        ["bash", str(SESSION_HOOK), "codex"],
+        ["bash", str(SESSION_HOOK), "claude"],
         cwd=root,
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
@@ -211,7 +213,7 @@ def test_concurrent_event_takes_over_after_owner_failure(tmp_path: Path) -> None
         "OMC_TEST_FAILURE_DELAY": "0.5",
     }
     first = subprocess.Popen(
-        ["bash", str(SESSION_HOOK), "codex"],
+        ["bash", str(SESSION_HOOK), "claude"],
         cwd=root,
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,

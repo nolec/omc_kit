@@ -3,6 +3,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import sys
+sys.dont_write_bytecode = True
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -789,11 +792,29 @@ def main() -> int:
     )
     ap.add_argument("--out", type=Path, default=None, help="Write composed prompt to this path (optional).")
     ap.add_argument("--quiet-write", action="store_true", help="Do not print the output path when --out is used.")
+    ap.add_argument("--workspace-intent", choices=["read", "start", "status", "continue"])
+    ap.add_argument("--workspace-parent", type=Path)
+    ap.add_argument("--workspace-ticket", type=Path)
+    ap.add_argument("--workspace-ticket-sha256")
+    ap.add_argument("--workspace-path", type=Path)
+    ap.add_argument("--workspace-work-id")
     args = ap.parse_args()
 
     if args.request is None and args.request_file is None:
         raise SystemExit("Provide --request or --request-file")
     request_text = args.request if args.request is not None else args.request_file.read_text(encoding="utf-8")
+    if args.workspace_intent is not None or os.environ.get('OMC_EXECUTOR', '').lower() == 'codex':
+        import omc_workspace_entry
+        route = ['--intent', args.workspace_intent or 'read', '--source', str(Path.cwd())]
+        # Ticket replay must keep the original request, not a follow-up query.
+        if args.workspace_ticket is None:
+            route += ['--request', request_text]
+        for flag, value in [('parent', args.workspace_parent), ('ticket', args.workspace_ticket),
+                            ('ticket-sha256', args.workspace_ticket_sha256),
+                            ('workspace', args.workspace_path), ('work-id', args.workspace_work_id)]:
+            if value is not None:
+                route += ['--' + flag, str(value)]
+        return omc_workspace_entry.main(route)
     auto_light, routing_reason = _light_mode_decision(request_text)
     if args.friction_mode == "light":
         routing_reason = "forced_light"

@@ -69,6 +69,10 @@ def _auto_prompt_args(args: argparse.Namespace, *, mode: str) -> list[str]:
         cmd.append("--quiet-write")
     if getattr(args, "context_mode", None):
         cmd.extend(["--context-mode", args.context_mode])
+    for name in ("workspace_intent", "workspace_parent", "workspace_ticket", "workspace_ticket_sha256", "workspace_path", "workspace_work_id"):
+        value = getattr(args, name, None)
+        if value is not None:
+            cmd.extend(["--" + name.replace("_", "-"), str(value)])
     if getattr(args, "work_class", None):
         cmd.extend(["--work-class", args.work_class])
     for b in args.base:
@@ -125,6 +129,7 @@ _COMMAND_SURFACES = {
             "version",
             "guard",
             "quickstart",
+            "workspace-entry",
             "run",
             "completion-report",
             "skill-cohort",
@@ -209,6 +214,8 @@ def _run_guarded(project_root: Path, *, label: str, command: list[str]) -> int:
 
 def main() -> int:
     argv = sys.argv[1:]
+    if argv and argv[0] == "workspace-entry":
+        return _run_script(_kit_root() / "scripts" / "omc_workspace_entry.py", argv[1:])
     commands = direct_commands()
     if not argv:
         argv = ["prompt", *argv]
@@ -224,6 +231,8 @@ def main() -> int:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     sub = ap.add_subparsers(dest="command", required=True, metavar="COMMAND")
+
+    sub.add_parser("workspace-entry", help="Prepare an independent workspace without initializing the source.")
 
     setup = sub.add_parser("setup", help="Install the kit into the current or target project.")
     setup.add_argument("--target", type=Path, default=Path.cwd(), help="Target repository root.")
@@ -640,6 +649,12 @@ def main() -> int:
             default=None,
             help="Explicit coding-session work class.",
         )
+        sp.add_argument("--workspace-intent", choices=["read", "start", "status", "continue"])
+        sp.add_argument("--workspace-parent", type=Path)
+        sp.add_argument("--workspace-ticket", type=Path)
+        sp.add_argument("--workspace-ticket-sha256")
+        sp.add_argument("--workspace-path", type=Path)
+        sp.add_argument("--workspace-work-id")
         sp.add_argument("--out", type=Path, default=Path("/tmp/prompt.md"))
         sp.add_argument("--no-confirm", action="store_true", help="Skip the interactive role confirmation step.")
         sp.add_argument(

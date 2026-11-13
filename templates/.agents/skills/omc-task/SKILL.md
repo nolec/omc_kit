@@ -3,6 +3,17 @@ name: omc-task
 description: "7단계 TDD 파이프라인으로 구현 실행. 트리거: 구현해줘, 만들어줘, 코딩해줘, 개발해줘, 이거 짜줘. CONTRACT→RED→GREEN→REFACTOR→GATE→REVIEW 순서. Tier별 허용 생략 외 단계 건너뜀 금지. omc-plan 이후 사용."
 ---
 
+## Codex 자동 독립 작업 준비 (A)
+Codex는 원본의 state init/session_start/sync-require보다 먼저 진입을 결정합니다.
+새 구현 요청은 내부 `python3 -I -B <신뢰하는-kit>/scripts/omc.py workspace-entry --intent start --source <원본> --request <현재요청> [--parent <승인된외부부모>]`로 준비합니다. 사용자가 start-isolated를 입력할 필요는 없습니다.
+반환된 `ticket_path`, `ticket_sha256`, `workspace`, `work_id`, `session_id`를 보존합니다. 재전달/조회는 `--intent status --ticket <경로> --ticket-sha256 <SHA>`이며 새 ticket을 발급하지 않습니다.
+이어가기는 `--intent continue`와 같은 ticket·SHA·`--workspace <경로> --work-id <ID>`를 명시합니다. 실패하면 원본 초기화나 새 작업으로 fallback하지 않습니다.
+상태·설계 요청은 `--intent read`이며 작업 공간과 세션을 만들지 않습니다. 본문의 기존 세션 동기화는 원본에서 실행하지 않고, 구현 인계 후 명시된 작업 공간에서만 수행합니다.
+`WORKSPACE_READY`가 이미 새 work/session을 등록했으면 아래 일반 Guard의 start를 다시 실행하지 않습니다. 반환된 작업 공간의 state status와 binding을 확인하고 그 세션의 새 CONTRACT로 이어갑니다. 새 세션을 다시 만들지 않습니다.
+`WORKSPACE_READY`는 공간 준비에 한정됩니다. 일반 채팅 파일 도구의 원본 쓰기 차단이나 설치·검증 실행을 입증하지 않습니다.
+새 CONTRACT 뒤 승인된 테스트 경로를 작성하고 실제 실패·RED 등록 뒤 구현합니다. 새 테스트 파일에 RED를 선행 요구하지 않습니다. 기존 승인·RED는 복사하지 않습니다.
+
+
 # OMC TDD 파이프라인
 
 Tier별 허용 생략 외에는 단계를 건너뛰지 않습니다. 적용되는 구현 단계는 아래 순서로 진행합니다. 계획이 없으면 `$omc-plan`, 원인 불명 버그면 `$omc-investigate`로 돌립니다. 속도 기준은 `docs/orchestration_usage.md`와 같습니다: DoD가 고정되면 fast, 새 파일/API/다중 파일이면 normal.

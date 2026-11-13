@@ -4,6 +4,13 @@
 #   EXECUTOR_NAME: cursor | claude | gemini | codex (기본값: unknown)
 set -u
 
+# OMC_CODEX_READ_ONLY_BOOTSTRAP: no input consumption, log, mkdir, lock,
+# state init, context refresh or session registration before request routing.
+if [[ "${1:-unknown}" == "codex" ]]; then
+  printf '%s\n' '[OMC] 읽기 전용 시작: 새 요청은 workspace-entry로 준비합니다. 원본 상태는 초기화하지 않습니다.'
+  exit 0
+fi
+
 EXECUTOR="${1:-unknown}"
 
 # stdin은 한 번만 소비한다. 값은 디스크에 저장하지 않고 event_id 판정과
