@@ -1,5 +1,15 @@
 # OMC Plan Workflow
 
+## Codex 자동 독립 작업 준비 (A)
+Codex는 원본의 state init/session_start/sync-require보다 먼저 진입을 결정합니다.
+새 구현 요청은 내부 `python3 -I -B <신뢰하는-kit>/scripts/omc.py workspace-entry --intent start --source <원본> --request <현재요청> [--parent <승인된외부부모>]`로 준비합니다. 사용자가 start-isolated를 입력할 필요는 없습니다.
+반환된 `ticket_path`, `ticket_sha256`, `workspace`, `work_id`, `session_id`를 보존합니다. 재전달/조회는 `--intent status --ticket <경로> --ticket-sha256 <SHA>`이며 새 ticket을 발급하지 않습니다.
+이어가기는 `--intent continue`와 같은 ticket·SHA·`--workspace <경로> --work-id <ID>`를 명시합니다. 실패하면 원본 초기화나 새 작업으로 fallback하지 않습니다.
+상태·설계 요청은 `--intent read`이며 작업 공간과 세션을 만들지 않습니다. 본문의 기존 세션 동기화는 원본에서 실행하지 않고, 구현 인계 후 명시된 작업 공간에서만 수행합니다.
+`WORKSPACE_READY`는 공간 준비에 한정됩니다. 일반 채팅 파일 도구의 원본 쓰기 차단이나 설치·검증 실행을 입증하지 않습니다.
+새 CONTRACT 뒤 승인된 테스트 경로를 작성하고 실제 실패·RED 등록 뒤 구현합니다. 새 테스트 파일에 RED를 선행 요구하지 않습니다. 기존 승인·RED는 복사하지 않습니다.
+
+
 ## Phase 0
 일반 채팅 최종 답변에 JSON을 출력하지 않는다. schema 전용 응답은 격리 평가 runner가 frozen context와 출력 schema를 명시한 호출에만 적용한다. 일반 채팅은 내부 기록과 사용자 보고를 분리하고 한글 판정·이유·검증·다음 행동만 표시한다. 기계 판정은 detached_v1 별도 기록 규칙을 따른다.
 주입된 OMC 세션 문맥 우선. 동기화되어 있으면 상태 명령을 실행하지 않습니다. `scripts/omc.py`가 제공된 정확한 context path 밖은 탐색 생략. 문맥 없거나 오래되면:
