@@ -208,3 +208,13 @@ def test_valid_qa_output_fixture_has_required_structure():
 def test_invalid_qa_output_fixture_exposes_weak_checklist():
     failures = _validate_qa_output(INVALID_QA_SAMPLE)
     assert {"feature", "flow", "user", "env", "normal", "exception", "regression", "top5", "not_executed", "next_skill"}.issubset(set(failures))
+
+
+def test_qa_distinguishes_prior_evidence_and_execution_from_proposals():
+    text = _read(REQUIRED_QA_SKILL_PATHS[0])
+    for marker in (
+        "기존 검증 결과", "이미 확인", "추가 확인 필요", "근거 없음",
+        "조작", "기대 결과", "검증 환경", "실행 근거", "미실행",
+        "명시적으로 검증 실행을 요청", "실제 호스트", "배포된 서비스",
+    ):
+        assert marker in text, marker
