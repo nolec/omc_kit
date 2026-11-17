@@ -1,3 +1,4 @@
+import re
 from html.parser import HTMLParser
 import json
 from pathlib import Path
@@ -79,3 +80,36 @@ def test_dashboard_title_identifies_snapshot_date():
     title = (DASH / 'README.md').read_text().splitlines()[0]
     assert '2026-11-17' in title
     assert '최신 기준 2026-11-12' not in title
+
+def test_dashboard_subtitle_distinguishes_source_check_from_release_history():
+    html = (DASH / 'index.html').read_text()
+    header = html.split('<header>', 1)[1].split('</header>', 1)[0]
+    subtitle = re.sub(r'<[^>]+>', '', header.rsplit('<p>', 1)[1].split('</p>', 1)[0])
+    snapshot = json.loads((DASH / 'view.json').read_text())['current_source_snapshot']
+    assert f"{snapshot['checked_at']} 소스 확인" in subtitle
+    assert '2026-11-12 릴리스 이력' in subtitle
+    assert '2026-11-12 최신화' not in subtitle
+
+def test_dashboard_current_heading_exposes_the_snapshot_date_as_time():
+    class SnapshotHeading(HTMLParser):
+        def __init__(self):
+            super().__init__()
+            self.heading_count = 0
+            self.in_first_heading = False
+            self.date_values = []
+
+        def handle_starttag(self, tag, attrs):
+            if tag == 'h2':
+                self.heading_count += 1
+                self.in_first_heading = self.heading_count == 1
+            elif tag == 'time' and self.in_first_heading:
+                self.date_values.append(dict(attrs).get('datetime'))
+
+        def handle_endtag(self, tag):
+            if tag == 'h2':
+                self.in_first_heading = False
+
+    parser = SnapshotHeading()
+    parser.feed((DASH / 'index.html').read_text())
+    snapshot = json.loads((DASH / 'view.json').read_text())['current_source_snapshot']
+    assert parser.date_values == [snapshot['checked_at']]
