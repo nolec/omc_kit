@@ -106,7 +106,7 @@ Codex adapter는 아직 구현되지 않았고 이번 범위에서 개발하지 
 일반 개발 작업은 내부 benchmark 명령을 직접 조합하지 않고 아래 흐름으로 사용합니다.
 
 1. `python3 scripts/omc.py setup --target /path/to/project`으로 설치합니다.
-2. 구현은 Codex의 `$omc-task`, Claude Code·Gemini CLI의 `/task`, Cursor의 자연어 요청으로 시작합니다.
+2. 구현은 Codex의 `$omc-task`로 시작합니다.
 3. `python3 scripts/omc.py state status --target .`로 현재 세션과 실행 상태를 확인합니다.
 4. 변경 검토는 `$omc-review`, 배포 준비는 `$omc-ship`을 사용합니다.
 
@@ -193,14 +193,7 @@ python3 scripts/omc.py version --target . --json
 python3 scripts/omc_doctor.py
 ```
 
-3. Git pre-commit hook을 설치하거나 doctor의 수정 옵션을 사용합니다.
-
-```bash
-cp scripts/pre-commit.sample .git/hooks/pre-commit
-chmod +x .git/hooks/pre-commit
-# 또는
-python3 scripts/omc_doctor.py --fix
-```
+3. 기존 프로젝트의 훅 설정은 보존합니다. 자동 Git 훅 설치를 요구하지 않으며, 위 진단 명령은 `--fix` 없이 실행합니다.
 
 4. 세션 상태를 초기화합니다.
 
@@ -219,16 +212,6 @@ $omc-plan 로그인 기능 구현 계획
 $omc-task 계획에 따라 구현
 $omc-review 변경사항 리뷰
 ```
-
-Claude Code와 Gemini CLI에서는 slash command를 사용합니다.
-
-```text
-/plan 로그인 기능 구현 계획
-/task 계획에 따라 구현
-/review 변경사항 리뷰
-```
-
-Cursor는 설치된 rules와 hooks가 자연어 요청을 분류합니다.
 
 ### 권장 흐름
 

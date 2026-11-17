@@ -1,4 +1,16 @@
 {
+  "current_source_snapshot": {
+    "checked_at": "2026-11-17",
+    "source_commit": "6ab95657598dfbf1332b1c35334dbe098cdd304f",
+    "version": "0.7.2",
+    "automatic_hooks": "disabled",
+    "install_status": "not_reverified",
+    "feature_evidence": {
+      "스킬": "지침 및 계약 검사 42개 통과",
+      "리뷰_품질": "선택한 합성 Git 사례 5개 통과",
+      "실사용": "미검증"
+    }
+  },
   "context": {
     "frozen_at": "2026-10-06T09:58:29.266053+00:00",
     "versions": {
@@ -2051,8 +2063,8 @@
     ],
     "next": "릴리스·재설치는 종료했다. 이번 문서 정합성 검증 후 omc-review로 문서6파일을 검토한다. 문서 변경만으로 재릴리스·재설치를 요구하거나 기존 비교 보류를 해제하지 않는다.",
     "purpose": "oh-my-claudecode의 유용한 강점을 흡수해 OMC의 부족한 부분을 개선",
-    "current_priority": "현재 · 0.7.0 로컬 릴리스·12곳 재설치 완료 / 후속 문서 정합성 최신화 · 2026-11-11",
-    "items_scope": "items는 날짜별 과거 비교 이력이며 현재 상태·다음 작업의 기준은 current_update다."
+    "current_priority": "이전 이력 · 0.7.0 로컬 릴리스·12곳 재설치 완료 / 후속 문서 정합성 최신화 · 2026-11-11",
+    "items_scope": "items와 current_update는 날짜별 과거 비교 이력이며 소스 확인 시점의 기준은 current_source_snapshot이다."
   },
   "decision": {
     "candidate": "실제 비교 차단 원인 보완 후 업무 재검증",
@@ -2149,7 +2161,7 @@
       "B": "f1351c5407b96b70d4f1f3f897487fc83ca1aad3"
     },
     "date": "2026-11-12",
-    "status": "현재 · 0.7.2 로컬 릴리스·12곳 재설치 완료 / 기존 스테이징 보존 · 2026-11-12",
+    "status": "이전 이력 · 0.7.2 로컬 릴리스·12곳 재설치 완료 / 기존 스테이징 보존 · 2026-11-12",
     "latest_fields": {
       "현재 상태": "0.7.2 고정 후보 d8a1c9e54824e042d5ead04c509be092c1c46172의 로컬 릴리스와 기존 12곳 재설치·strict 감사를 완료했다. 기존 작업 파일·인덱스·HEAD를 보존했다.",
       "보완 내용": "0.7.1 기반 보완과 A 정책 기반 판정 생성·B 외부 원문 발행용 사본 저장을 포함한다. source-staging 보고 ID 충돌을 .source-staging으로 분리하고, review 복사본 동기화 및 review·ship 전체 일치 검사를 복원했다.",
