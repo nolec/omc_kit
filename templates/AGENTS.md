@@ -12,7 +12,7 @@
 
 이 저장소에는 OMC 구성요소가 직접 설치되어 있습니다.
 
-## 세션 시작 시 자동 실행 (MANDATORY)
+## Codex 명시적 진입 — 자동 훅 비활성
 
 <!-- OMC_CODEX_READ_ONLY_BOOTSTRAP -->
 **Codex는 요청을 받기 전 원본에서 state init·session_start를 실행하지 않습니다.**
@@ -22,21 +22,16 @@
 `WORKSPACE_READY`는 공간 준비이며 편집·설치·검증·전체 작업 완료가 아닙니다. 준비된 공간에서 새 CONTRACT→테스트 작성→실제 RED→구현 순서를 따릅니다.
 계속 요청은 기존 ticket과 명시 workspace/work ID로만 연결하고, 모호하면 작업 식별만 확인합니다. 원본 상태를 복구하거나 새 작업으로 몰래 바꾸지 않습니다.
 
-Codex 이외 실행기는 기존 시작 절차를 유지합니다:
-```bash
-python3 scripts/omc.py state init --target . && \
-python3 scripts/omc.py hook session_start --target .
-```
 
 ---
 
 ## AI 도구 우회 절대 금지 (CRITICAL)
 
 **모든 AI는 `replace_file_content`나 `write_to_file` 등 파일 제어 도구를 사용해 코드를 직접 수정하기 전에, 반드시 `python3 scripts/omc.py state status`를 통해 현재 OMC 세션이 사용자의 요청 문맥과 동기화되어 있는지 확인해야 합니다.**
-Codex에서 동기화되지 않았다면 원본 초기화 대신 workspace-entry의 새 작업/이어가기 binding을 확인하세요. 다른 실행기는 `omc.py state init` 및 `session_start`를 사용합니다. OMC 파이프라인(TDD 게이트 등)을 거치지 않고 LLM 도구로 파일만 조용히 수정하는 행위는 시스템 파괴로 간주됩니다.
+Codex에서 동기화되지 않았다면 원본 초기화 대신 workspace-entry의 새 작업/이어가기 binding을 확인하세요. OMC 파이프라인(TDD 게이트 등)을 거치지 않고 LLM 도구로 파일만 조용히 수정하는 행위는 시스템 파괴로 간주됩니다.
 
 
-## 코딩 작업 자동 파이프라인 (MANDATORY — 모든 LLM 공통)
+## 코딩 작업 자동 파이프라인 (MANDATORY — Codex)
 
 > **Tier 1 구현 요청은 자동으로 파이프라인에 진입**합니다. Tier 0는 생략 가능.
 
@@ -44,8 +39,8 @@ Codex에서 동기화되지 않았다면 원본 초기화 대신 workspace-entry
 
 | Tier | 정의 | CONTRACT·RED |
 |---|---|---|
-| **Tier 0** | 동작·API 변경 없음. `*.styled.ts`, `*.constants.ts`, `index.ts`, `*.config.ts`, 오타·정렬 수정 | **생략 가능** — 훅이 차단하지 않음 |
-| **Tier 1 (신규 파일)** | 새 파일 생성, 신규 컴포넌트·훅·함수 | **CONTRACT + RED 필수** — 훅이 물리적으로 차단 |
+| **Tier 0** | 동작·API 변경 없음. `*.styled.ts`, `*.constants.ts`, `index.ts`, `*.config.ts`, 오타·정렬 수정 | **생략 가능** — 별도 자동 차단 없음 |
+| **Tier 1 (신규 파일)** | 새 파일 생성, 신규 컴포넌트·훅·함수 | **CONTRACT + RED 필수** — 명시적 검증에서 확인 |
 | **Tier 1 (기존 파일 수정)** | 동작·API 변경, 로직 수정 | **CONTRACT만 필수** — RED는 대량 수정 시 경고 |
 
 > **판단 기준 한 줄**: "동작·API·새 파일 없으면 Tier 0"
@@ -59,7 +54,7 @@ Codex에서 동기화되지 않았다면 원본 초기화 대신 workspace-entry
 | 기능 추가 | "이 기능 추가해줘", "feature", "구현해줘" |
 | 버그 수정 (동작 변경 수반) | 재현 테스트 필요한 버그 |
 
-> Tier 1은 CONTRACT를 건너뛰면 훅이 막음. Tier 0은 훅이 차단하지 않음.
+> Tier 1은 승인·CONTRACT·RED를 명시적으로 검증합니다. 자동 훅에 의한 차단을 주장하지 않습니다.
 
 **Tier 1 요청일 때만 아래 체크포인트를 출력합니다. Tier 0는 이 절을 생략합니다.**
 
@@ -127,54 +122,21 @@ PHASE 5 ▸ REFACTOR + TDD GATE  🔵
 
 | LLM | 파일 생성 차단 | 커밋 차단 | 배포 차단 |
 |---|---|---|---|
-| Cursor | `beforeToolCall` → `omc_pipeline_guard.py` | pre-commit hook | `omc_tdd_check.py` |
-| Claude Code | `PreToolUse` → `omc-pipeline-check.sh` | pre-commit hook | `omc_tdd_check.py` |
-| Codex | `PreToolUse` matcher 설정됨 / **파일 편집 훅 미발화(플랫폼 한계)** → `PostToolUse` 소프트 가드(`omc-post-file-check.sh`) + pre-commit + 프롬프트 | pre-commit hook | `omc_tdd_check.py` |
-| Gemini | `BeforeTool` → `omc-pipeline-check.sh` (exit 2) | pre-commit hook | `omc_tdd_check.py` |
+| Codex | 자동 훅 비활성 — 승인·CONTRACT·RED를 명시적으로 검증 | 명시적 TDD 검증 | `omc_tdd_check.py` |
 
 자연어 요청 대신 아래 커맨드를 직접 사용할 수 있습니다.
 
 > **LLM마다 호출 방식이 다릅니다. 자신의 IDE에 맞는 방식만 사용하세요.**
-
-### Claude Code / Gemini CLI — 슬래시 커맨드
-
-| 커맨드 | 역할 | 설명 |
-|--------|------|------|
-| `/plan [작업]` | analysis + senior_coding | 구현 전 TDD 태스크 분해 |
-| `/task [설명]` | senior_coding | 7단계 TDD 파이프라인 |
-| `/review [파일/설명]` | code_review + senior_coding | `git diff` 기준 코드 리뷰 |
-| `/investigate [이슈]` | analysis | 4단계 방법론으로 버그 근본 원인 추적 |
-| `/lesson [키워드]` | — | `.omc/lessons/` BM25 관련 교훈 검색·출력 |
-| `/status` | — | 현재 OMC 세션 상태 요약 |
-| `/qa [변경]` | — | 구현 후 수동 QA 체크리스트 생성 |
-| `/reentry [설명]` | analysis | 오랜만에 돌아온 프로젝트 빠른 파악·복귀 맥락 복원 |
-| `/ship [대상]` | — | OMC 가드 + 타입/린트/테스트/빌드 확인 후 배포 |
-| `/brainstorm [주제]` | — | 요구사항이 아직 모호할 때 — 소크라테스식 탐색 |
-| `/benchmark [기능]` | — | 세계 1등 제품과 비교해 갭·차별화·다음 액션 도출 |
-| `/office-hours [요청]` | — | 기능 방향이 맞는지 의심될 때 — 6개 강제 질문 |
-| `/ceo-review [모드]` | — | 기능 범위 재검토 — CEO 관점 10가지 체크 |
-| `/critique [계획/코드]` | — | 계획·코드에 대한 냉정한 Pre-mortem 비판 리뷰 |
-| `/retro [기간]` | — | 주기적 회고 — 세션 히스토리 분석 |
-
-### Cursor — 자연어 (슬래시 커맨드 없음)
-
-Cursor는 `.cursor/rules/`에 규칙이 항상 적용됩니다. **슬래시 커맨드 없이** 자연어로 요청하면 됩니다.
-
-```
-"이 기능 계획 잡아줘"   →  plan 흐름 자동 진입
-"버튼 컴포넌트 만들어줘" →  task 흐름 자동 진입
-"코드 리뷰해줘"          →  review 흐름 자동 진입
-```
 
 ### Codex — Agent Skills (`$` 접두사 또는 자연어)
 
 > ⚠️ **Codex 전용 주의**: `PreToolUse` 파일 편집 훅이 플랫폼 한계로 미발화합니다.
 > 파일을 수정·생성하기 **전에 반드시** CONTRACT를 먼저 등록하세요:
 > ```bash
-> python3 scripts/omc.py state record --target . --request "작업 설명" --roles senior_coding
+> python3 scripts/omc.py state record --target . --mode team --title "승인된 작업" --request "작업 설명" --roles senior_coding
 > python3 scripts/omc_pipeline_guard.py contract-done
 > ```
-> CONTRACT 없이 파일을 수정하면 `PostToolUse` 경고 + `pre-commit` 훅이 차단합니다.
+> 자동 PostToolUse·pre-commit 훅은 비활성입니다. 파일 변경 전 승인·CONTRACT와 실제 RED를 직접 확인합니다.
 
 ```
 $omc-plan 로그인 기능 구현
@@ -188,14 +150,11 @@ $omc-reentry 이 프로젝트 뭐였지
 
 권장 순서: `plan` → `task` → `review` → `ship`
 
-- **Claude Code**: `.claude/commands/*.md` — `/plan` 형식
-- **Cursor**: `.cursor/rules/` — 자연어 자동 적용
 - **Codex**: `.agents/skills/omc-*/` — `$omc-plan` 또는 자연어
-- **Gemini CLI**: `.gemini/commands/` — `/plan` 형식
 
 ## 오케스트레이션 사용 원칙
 
-Codex, Claude, Gemini의 입력 방식과 실행 범위 기준은 `docs/orchestration_usage.md`를 따릅니다.
+Codex의 입력 방식과 실행 범위 기준은 `docs/orchestration_usage.md`를 따릅니다.
 
 ---
 
@@ -247,7 +206,7 @@ DoD 확정         RED→GREEN       버그·리스크      TDD 게이트       
 
 **전환 없이 다음 단계로 넘어가지 않습니다.**
 
-## 역할 자동 추천 프로토콜 (MANDATORY — Cursor·Claude·Gemini·Codex 공통)
+## 역할 자동 추천 프로토콜 (MANDATORY — Codex)
 
 **모든 AI는 사용자의 자연어 요청을 받으면 아래 플로우를 반드시 따릅니다.**
 
@@ -303,7 +262,7 @@ DoD 확정         RED→GREEN       버그·리스크      TDD 게이트       
 
 ---
 
-## TDD 규칙 (MANDATORY — 모든 LLM 공통)
+## TDD 규칙 (MANDATORY — Codex)
 
 새 파일·함수 추가 시 **반드시** 테스트를 먼저 작성합니다:
 1. **RED**: 실패하는 테스트 먼저 작성
@@ -323,7 +282,7 @@ DoD 확정         RED→GREEN       버그·리스크      TDD 게이트       
 - 기본 진입점은 `python scripts/omc.py "요청"`입니다.
 - `.omc/` 상태는 `scripts/omc.py state init|status|compact`로 관리합니다.
 - 기본 정책은 `.omc/policy.json`의 `enforce_confirm=true`이며, `scripts/omc_guard.py`가 최신 미확정 세션을 차단합니다.
-- **세션 자동 confirm**: `session_start` 훅에서 `omc_context.py`가 fresh 세션을 자동으로 confirm 처리합니다. 매번 수동 confirm이 불필요합니다. ship/git commit 전 TDD 게이트는 그대로 유지됩니다.
+- **자동 실행 비활성**: 세션 시작·도구·Git 자동 훅을 설치하지 않습니다. 상태 조회와 작업 승인을 구분하고 명시적 작업 진입에서만 승인·CONTRACT를 확인합니다. ship/git commit 전 수동 TDD 검증은 유지합니다.
 - 라이프사이클 훅은 `scripts/omc.py hook session_start|session_end|pre_compact|post_compact`를 사용합니다.
 - 모드는 `autopilot`, `team`, `ulw`, `ralph`, `deep-interview`를 요청 의도에 맞게 선택합니다.
 
@@ -403,7 +362,7 @@ python3 scripts/omc_autopilot.py status
 
 ---
 
-## ⛔ 스킬 완료 후 자동 진행 금지 (MANDATORY — 모든 LLM 공통)
+## ⛔ 스킬 완료 후 자동 진행 금지 (MANDATORY — Codex)
 
 **AI는 아래 상황에서 반드시 멈추고 사용자의 다음 명령을 기다린다.**
 

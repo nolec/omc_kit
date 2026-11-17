@@ -13,13 +13,9 @@ from pathlib import Path
 
 from omc_git_hooks import CompletionHookResolution, resolve_completion_hook
 from omc_hook_contract import (
-    CLAUDE_HOOK_CONTRACT,
-    GEMINI_HOOK_CONTRACT,
     HOOK_CONTRACT_MARKERS,
     HOOK_CONTRACT_SUMMARY,
-    claude_contract_issues,
-    codex_contract_issues,
-    gemini_contract_issues,
+    codex_hooks_disabled,
 )
 from omc_source_hash import (
     DEPLOYED_DOCUMENTS,
@@ -243,6 +239,8 @@ def _build_install_manifest(source_kit: Path, target: Path) -> dict[str, dict[st
                 or rel_path.is_absolute()
                 or ".." in rel_path.parts
             ):
+                continue
+            if rel_path.parts[0] in {".claude", ".gemini", ".cursor", ".agent"} or rel in {".cursorignore", "CLAUDE.md", "GEMINI.md"}:
                 continue
             target_file = target / rel_path
             if preserved_retired_hub and any(
@@ -709,193 +707,25 @@ def _ensure_executable(path: Path) -> None:
         )
 
 
-def _install_claude_settings(settings_path: Path, *, force: bool) -> None:
-    """Create or merge .claude/settings.json with OMC SessionStart/End + PreToolUse + UserPromptSubmit hooks.
-
-    Shared hook contract: HOOK_CONTRACT_SUMMARY
-    """
-    import json
-
-    omc_hooks = {
-        "hooks": {
-            "PreToolUse": [
-                {
-                    "matcher": CLAUDE_HOOK_CONTRACT["pre_mutate_guard"]["matcher"],
-                    "hooks": [
-                        {"type": "command", "command": CLAUDE_HOOK_CONTRACT["pre_mutate_guard"]["command"]}
-                    ],
-                }
-            ],
-            "SessionStart": [
-                {"hooks": [{"type": "command", "command": CLAUDE_HOOK_CONTRACT["session_context"]["commands"][0]}]}
-            ],
-            "SessionEnd": [
-                {"hooks": [{"type": "command", "command": ".agent-hooks/omc-session-end.sh claude"}]}
-            ],
-            "UserPromptSubmit": [
-                {"hooks": [{"type": "command", "command": CLAUDE_HOOK_CONTRACT["session_context"]["commands"][1], "timeout": 10}]}
-            ],
-        }
-    }
-
-    settings_path.parent.mkdir(parents=True, exist_ok=True)
-    if settings_path.exists() and not force:
-        # Merge: add hooks only if not already present
-        try:
-            existing = json.loads(settings_path.read_text(encoding="utf-8"))
-        except Exception:
-            existing = {}
-        if "hooks" not in existing:
-            existing["hooks"] = {}
-        hooks = existing["hooks"]
-        if "PreToolUse" not in hooks:
-            hooks["PreToolUse"] = omc_hooks["hooks"]["PreToolUse"]
-        if "SessionStart" not in hooks:
-            hooks["SessionStart"] = omc_hooks["hooks"]["SessionStart"]
-        if "SessionEnd" not in hooks:
-            hooks["SessionEnd"] = omc_hooks["hooks"]["SessionEnd"]
-        if "UserPromptSubmit" not in hooks:
-            hooks["UserPromptSubmit"] = omc_hooks["hooks"]["UserPromptSubmit"]
-        _write_generated_file(
-            settings_path,
-            json.dumps(existing, ensure_ascii=False, indent=2),
-            force=True,
-        )
-    else:
-        _write_generated_file(
-            settings_path,
-            json.dumps(omc_hooks, ensure_ascii=False, indent=2),
-            force=True,
-        )
 
 
-def _install_gemini_settings(settings_path: Path, *, force: bool) -> None:
-    """Create or merge .gemini/settings.json with OMC BeforeTool/SessionStart/End/BeforeAgent hooks."""
-    import json
-
-    omc_hooks = {
-        "hooks": {
-            "BeforeTool": [
-                {
-                    "matcher": GEMINI_HOOK_CONTRACT["pre_mutate_guard"]["matcher"],
-                    "hooks": [
-                        {
-                            "type": "command",
-                            "name": "omc-pipeline-check",
-                            "description": "파이프라인 가드 — CONTRACT 미등록 파일 수정 차단 (exit 2)",
-                            "command": GEMINI_HOOK_CONTRACT["pre_mutate_guard"]["command"],
-                            "timeout": 10000,
-                        }
-                    ],
-                }
-            ],
-            "SessionStart": [
-                {
-                    "hooks": [
-                        {
-                            "type": "command",
-                            "name": "omc-session-start",
-                            "description": "OMC 세션 컨텍스트 자동 주입 (JSON)",
-                            "command": GEMINI_HOOK_CONTRACT["session_context"]["commands"][0],
-                        }
-                    ]
-                }
-            ],
-            "SessionEnd": [
-                {
-                    "hooks": [
-                        {
-                            "type": "command",
-                            "name": "omc-session-end",
-                            "description": "OMC session_end lifecycle 훅 실행",
-                            "command": ".agent-hooks/omc-session-end.sh gemini",
-                        }
-                    ]
-                }
-            ],
-            "BeforeAgent": [
-                {
-                    "hooks": [
-                        {
-                            "type": "command",
-                            "name": "omc-before-agent",
-                            "description": "사용자 메시지 기반 BM25 교훈 자동 주입 (JSON)",
-                            "command": GEMINI_HOOK_CONTRACT["session_context"]["commands"][1],
-                            "timeout": 10000,
-                        }
-                    ]
-                }
-            ],
-        }
-    }
-
-    settings_path.parent.mkdir(parents=True, exist_ok=True)
-    if settings_path.exists() and not force:
-        try:
-            existing = json.loads(settings_path.read_text(encoding="utf-8"))
-        except Exception:
-            existing = {}
-        if "hooks" not in existing:
-            existing["hooks"] = {}
-        hooks = existing["hooks"]
-        if "BeforeTool" not in hooks:
-            hooks["BeforeTool"] = omc_hooks["hooks"]["BeforeTool"]
-        if "SessionStart" not in hooks:
-            hooks["SessionStart"] = omc_hooks["hooks"]["SessionStart"]
-        if "SessionEnd" not in hooks:
-            hooks["SessionEnd"] = omc_hooks["hooks"]["SessionEnd"]
-        if "BeforeAgent" not in hooks:
-            hooks["BeforeAgent"] = omc_hooks["hooks"]["BeforeAgent"]
-        _write_generated_file(
-            settings_path,
-            json.dumps(existing, ensure_ascii=False, indent=2),
-            force=True,
-        )
-    else:
-        _write_generated_file(
-            settings_path,
-            json.dumps(omc_hooks, ensure_ascii=False, indent=2),
-            force=True,
-        )
 
 
-_install_claude_settings.__doc__ = (_install_claude_settings.__doc__ or "").replace(
-    "HOOK_CONTRACT_SUMMARY",
-    HOOK_CONTRACT_SUMMARY,
-)
 
 
 def _assert_codex_hook_contract(hooks_path: Path) -> None:
     import json
 
     data = json.loads(hooks_path.read_text(encoding="utf-8"))
-    issues = codex_contract_issues(data)
+    issues = [] if codex_hooks_disabled(data) else ["automatic hooks must be disabled"]
     if not issues:
         return
     detail = ", ".join(issues)
     raise ValueError(f"Codex hook contract invalid: missing {detail}")
 
 
-def _assert_claude_hook_contract(hooks_path: Path) -> None:
-    import json
-
-    data = json.loads(hooks_path.read_text(encoding="utf-8"))
-    issues = claude_contract_issues(data)
-    if not issues:
-        return
-    detail = ", ".join(issues)
-    raise ValueError(f"Claude hook contract invalid: missing {detail}")
 
 
-def _assert_gemini_hook_contract(hooks_path: Path) -> None:
-    import json
-
-    data = json.loads(hooks_path.read_text(encoding="utf-8"))
-    issues = gemini_contract_issues(data)
-    if not issues:
-        return
-    detail = ", ".join(issues)
-    raise ValueError(f"Gemini hook contract invalid: missing {detail}")
 
 
 def _kit_root(script_path: Path | None = None) -> Path:
@@ -954,11 +784,11 @@ def _read_install_source_metadata(target: Path) -> dict[str, str] | None:
 
 
 def _resolve_source_kit(current_kit: Path, target: Path) -> Path:
-    if _looks_like_source_kit(current_kit):
+    if current_kit.resolve() != target.resolve() and _looks_like_source_kit(current_kit):
         return current_kit.resolve()
 
     metadata = _read_install_source_metadata(target)
-    if metadata:
+    if metadata is not None:
         raw_source = metadata.get("source_path", "").strip()
         if not raw_source:
             raise SystemExit("OMC install source metadata is missing source_path")
@@ -1018,10 +848,7 @@ def _check_force_regression(kit: Path, tgt: Path) -> bool:
     # install.py가 덮어쓸 파일 중 live에서만 수정된 내용을 사전 표시
     ssot_warnings: list[str] = []
     templates = _templates_root(kit)
-    _RULE_DIRS = [
-        (templates / ".cursor" / "rules", tgt / ".cursor" / "rules"),
-        (templates / ".agent" / "rules", tgt / ".agent" / "rules"),
-    ]
+    _RULE_DIRS = []  # Codex has no mirrored IDE rule tree.
     for tmpl_dir, live_dir in _RULE_DIRS:
         if not tmpl_dir.is_dir() or not live_dir.is_dir():
             continue
@@ -1081,7 +908,7 @@ def _check_force_regression(kit: Path, tgt: Path) -> bool:
         print()
         print(" 권장 조치 (SSOT):")
         print("   1. live 파일을 source kit의 templates/ 에 먼저 복사하세요")
-        print("      예: cp .cursor/rules/omc-always.md templates/.cursor/rules/omc-always.md")
+        print("      Codex 스킬 SSOT: templates/.agents/skills/")
         print("   2. 또는: python3 scripts/omc_sync_ssot.py")
         print("   3. 그 후 install --force 재실행")
         print()
@@ -1122,6 +949,12 @@ def _main() -> int:
     force = bool(args.force)
     auto_update = bool(args.auto_update)
     migrate_shared_tasks = bool(args.migrate_shared_tasks)
+    # Refuse an enabled/unknown target before copying or rewriting any file.
+    existing_codex_hooks = tgt / ".codex" / "hooks.json"
+    if existing_codex_hooks.exists() or existing_codex_hooks.is_symlink():
+        if existing_codex_hooks.is_symlink() or existing_codex_hooks.parent.is_symlink():
+            raise ValueError("Codex hook target must be a regular local file")
+        _assert_codex_hook_contract(existing_codex_hooks)
     source_kit = _resolve_source_kit(kit, tgt)
     source_identity = capture_source_identity(source_kit)
     if auto_update:
@@ -1188,11 +1021,6 @@ def _main() -> int:
     if prompt_lean.exists():
         _copy(prompt_lean, tgt / "PROMPT_COMMON_LEAN.md", force=force)
 
-    # .cursorignore — Cursor가 .agents/ 스킬을 슬래시 커맨드로 노출하지 않도록 차단
-    cursorignore = templates / ".cursorignore"
-    if cursorignore.exists():
-        _copy(cursorignore, tgt / ".cursorignore", force=force)
-
     quickstart = """# OMC Kit Quickstart
 
 ## 30초 설치 후 바로 시작
@@ -1213,30 +1041,10 @@ python3 scripts/omc.py "만들고 싶은 것"
 
 ## 슬래시 커맨드 / 스킬
 
-### Claude Code · Antigravity IDE (슬래시 커맨드)
-
-| 커맨드 | 설명 |
-|--------|------|
-| `/brainstorm [주제]` | 요구사항 소크라테스식 탐색 |
-| `/office-hours [요청]` | 제품 사고 먼저 — 6개 강제 질문 |
-| `/ceo-review [모드]` | CEO 관점 기능 범위 재검토 |
-| `/plan [작업]` | TDD 태스크 분해 |
-| `/task [설명]` | 7단계 TDD 파이프라인 |
-| `/review` | git diff 코드 리뷰 |
-| `/investigate [이슈]` | 4단계 디버깅 방법론 |
-| `/lesson [키워드]` | BM25 교훈 검색 |
-| `/ship` | TDD 게이트 → 배포 |
-| `/retro` | 회고 + 교훈 캡처 |
-| `/status` | OMC 상태 확인 |
-
 ### Codex IDE (Agent Skills)
 
 명시적: `$omc-plan`, `$omc-task`, `$omc-review` 등  
 암묵적: "계획해줘", "태스크 나눠줘" 등 자연어로도 자동 트리거됩니다.
-
-### Cursor
-
-`.cursor/rules/omc-always.md`의 항상 적용 규칙으로 동작합니다. 슬래시 커맨드 없이 자연어로 요청하면 OMC 흐름을 따릅니다.
 
 ## 자주 쓰는 CLI 명령
 
@@ -1248,9 +1056,9 @@ python3 scripts/omc_autopilot.py new --id feat-x --title "기능 X"
 python3 scripts/omc.py autopilot --task-file .omc/tasks/feat-x.json --dry-run
 ```
 
-## 자동 가드 & CI
+## 명시적 검증 & CI
 
-커밋 전 staged 변경의 TDD 게이트를 확인합니다.
+자동 훅은 비활성입니다. 필요할 때 staged 변경의 TDD 게이트를 직접 실행합니다.
 
 ```bash
 python3 scripts/omc_tdd_check.py --staged
@@ -1327,41 +1135,6 @@ python3 scripts/omc_tdd_check.py --staged
             _copy(src, dst, force=force)
             _ensure_executable(dst)
 
-    # ── Claude Code slash commands (.claude/commands/) ───────────────────────
-    claude_cmds_src = templates / ".claude" / "commands"
-    if claude_cmds_src.exists():
-        for src in claude_cmds_src.rglob("*"):
-            if not src.is_file():
-                continue
-            rel = src.relative_to(claude_cmds_src)
-            dst = tgt / ".claude" / "commands" / rel
-            _copy(src, dst, force=force)
-
-    # ── Claude Code SessionStart/End hooks (.claude/settings.json) ──────────
-    claude_template = templates / ".claude" / "settings.json"
-    if claude_template.exists():
-        _assert_claude_hook_contract(claude_template)
-    claude_settings = tgt / ".claude" / "settings.json"
-    _install_claude_settings(claude_settings, force=force)
-
-    # ── Claude Code personal overlay (.claude/CLAUDE.md) ─────────────────────
-    # 개인 전용 — gitignore 영역. 공유 CLAUDE.md 대신 여기에 OMC 오버레이 설치.
-    claude_md_src = templates / "CLAUDE.md"
-    claude_md_dst = tgt / ".claude" / "CLAUDE.md"
-    if claude_md_src.exists():
-        _copy(claude_md_src, claude_md_dst, force=force)
-    _remove_legacy_overlay(tgt / "CLAUDE.md", "## OMC Overlay For Claude")
-
-    # ── Gemini CLI commands (.gemini/commands/) ──────────────────────────────
-    gemini_cmds_src = templates / ".gemini" / "commands"
-    if gemini_cmds_src.exists():
-        for src in gemini_cmds_src.rglob("*"):
-            if not src.is_file():
-                continue
-            rel = src.relative_to(gemini_cmds_src)
-            dst = tgt / ".gemini" / "commands" / rel
-            _copy(src, dst, force=force)
-
     # ── Codex CLI commands (.codex/commands/) ────────────────────────────────
     codex_cmds_src = templates / ".codex" / "commands"
     if codex_cmds_src.exists():
@@ -1372,21 +1145,6 @@ python3 scripts/omc_tdd_check.py --staged
             dst = tgt / ".codex" / "commands" / rel
             _copy(src, dst, force=force)
 
-    # ── Gemini CLI SessionStart/End/BeforeAgent hooks (.gemini/settings.json) ─
-    gemini_template = templates / ".gemini" / "settings.json"
-    if gemini_template.exists():
-        _assert_gemini_hook_contract(gemini_template)
-    gemini_settings = tgt / ".gemini" / "settings.json"
-    _install_gemini_settings(gemini_settings, force=force)
-
-    # ── Gemini CLI personal overlay (.gemini/GEMINI.md) ─────────────────────
-    # 개인 전용 — 공유 GEMINI.md 대신 여기에 OMC 오버레이 설치.
-    gemini_md_src = templates / "GEMINI.md"
-    gemini_md_dst = tgt / ".gemini" / "GEMINI.md"
-    if gemini_md_src.exists():
-        _copy(gemini_md_src, gemini_md_dst, force=force)
-    _remove_legacy_overlay(tgt / "GEMINI.md", "## OMC Overlay For Gemini")
-
     # ── Codex CLI hooks (.codex/hooks.json) ──────────────────────────────────
     codex_hooks_src = templates / ".codex" / "hooks.json"
     if codex_hooks_src.exists():
@@ -1394,74 +1152,17 @@ python3 scripts/omc_tdd_check.py --staged
         _copy(codex_hooks_src, tgt / ".codex" / "hooks.json", force=force)
 
     # ── Cursor project hooks (optional, when template files exist) ───────────
-    cursor_hooks_json = templates / ".cursor" / "hooks.json"
-    cursor_hook_start = templates / ".cursor" / "hooks" / "omc-session-start.sh"
-    cursor_hook_end = templates / ".cursor" / "hooks" / "omc-session-end.sh"
-    cursor_hook_require = templates / ".cursor" / "hooks" / "omc-require-confirm.sh"
-    cursor_rules_dir = templates / ".cursor" / "rules"
-
-    if cursor_hooks_json.exists():
-        _copy(cursor_hooks_json, tgt / ".cursor" / "hooks.json", force=force)
-    if cursor_hook_start.exists():
-        dst = tgt / ".cursor" / "hooks" / "omc-session-start.sh"
-        _copy(cursor_hook_start, dst, force=force)
-        _ensure_executable(dst)
-    if cursor_hook_end.exists():
-        dst = tgt / ".cursor" / "hooks" / "omc-session-end.sh"
-        _copy(cursor_hook_end, dst, force=force)
-        _ensure_executable(dst)
-    if cursor_hook_require.exists():
-        dst = tgt / ".cursor" / "hooks" / "omc-require-confirm.sh"
-        _copy(cursor_hook_require, dst, force=force)
-        _ensure_executable(dst)
-
-    cursor_hook_pipeline = templates / ".cursor" / "hooks" / "omc-pipeline-check.sh"
-    if cursor_hook_pipeline.exists():
-        dst = tgt / ".cursor" / "hooks" / "omc-pipeline-check.sh"
-        _copy(cursor_hook_pipeline, dst, force=force)
-        _ensure_executable(dst)
-
-    # Cursor rules (optional)
-    if cursor_rules_dir.exists():
-        for src in cursor_rules_dir.rglob("*"):
-            if not src.is_file():
-                continue
-            rel = src.relative_to(cursor_rules_dir)
-            dst = tgt / ".cursor" / "rules" / rel
-            _copy(src, dst, force=force)
-
-    # ── Agent Skills: .agents/skills/ (Codex) + .agent/skills/ (Antigravity) ──
+    # ── Codex skills: templates/.agents/skills is the sole source ──
     # Single source of truth: templates/.agents/skills/
-    # Both .agents/ (Codex, plural) and .agent/ (Antigravity, singular) get identical content.
     agent_skills_src = templates / ".agents" / "skills"
     if agent_skills_src.exists():
         for src in agent_skills_src.rglob("*"):
             if not src.is_file():
                 continue
             rel = src.relative_to(agent_skills_src)
-            for base in (".agents", ".agent"):
+            for base in (".agents",):
                 dst = tgt / base / "skills" / rel
                 _copy(src, dst, force=force)
-
-    # ── Antigravity workflows (.agent/workflows/) ─────────────────────────────
-    agent_workflows_src = templates / ".agent" / "workflows"
-    if agent_workflows_src.exists():
-        for src in agent_workflows_src.rglob("*"):
-            if not src.is_file():
-                continue
-            rel = src.relative_to(agent_workflows_src)
-            dst = tgt / ".agent" / "workflows" / rel
-            _copy(src, dst, force=force)
-
-    # ── Antigravity workspace rules (.agent/rules/) ───────────────────────────
-    agent_rules_src = templates / ".agent" / "rules"
-    if agent_rules_src.exists():
-        for src in agent_rules_src.rglob("*"):
-            if not src.is_file():
-                continue
-            rel = src.relative_to(agent_rules_src)
-            dst = tgt / ".agent" / "rules" / rel
-            _copy(src, dst, force=force)
 
     # ── .omc/lessons/ — Compound Engineering 교훈 디렉토리 ──────────────────
     lessons_dir = tgt / ".omc" / "lessons"
@@ -1471,101 +1172,15 @@ python3 scripts/omc_tdd_check.py --staged
         gitkeep.write_text("# Compound Engineering 교훈 디렉토리\n", encoding="utf-8")
         print(f"[install] created {lessons_dir.relative_to(tgt)}/")
 
-    # ── .omc/hooks.json — session_start 에 omc_context.py 자동 수집 포함 ────────
+    # Manual lifecycle commands remain available; installation never enables them.
     omc_hooks_path = tgt / ".omc" / "hooks.json"
-    import json as _json
-    _default_hooks = {
-        "version": 1,
-        "hooks": {
-            "session_start": [
-                {"type": "shell", "command": "python3 scripts/omc_context.py --target ."},
-                {"type": "builtin", "name": "refresh_notepad"},
-                {"type": "builtin", "name": "auto_compact"},
-                {
-                    "type": "shell",
-                    "name": "omc_status_check",
-                    "command": "python3 scripts/omc.py state status",
-                    "description": "새 세션 시작 시 OMC 상태 자동 출력 — LLM이 confirmed 여부를 즉시 파악",
-                },
-                {
-                    "type": "shell",
-                    "name": "role_reminder",
-                    "command": "echo '[OMC] 역할 선언 필수: analysis(읽기전용) | directive(파일수정/실행) | analysis+directive(둘다)'",
-                    "description": "역할 구분을 LLM에게 상기시킴",
-                },
-            ],
-            "session_end": [
-                {"type": "builtin", "name": "refresh_notepad"},
-                {"type": "builtin", "name": "auto_compact"},
-            ],
-            "pre_compact": [{"type": "builtin", "name": "snapshot_memory"}],
-            "post_compact": [{"type": "builtin", "name": "refresh_notepad"}],
-        },
-    }
-    if not omc_hooks_path.exists() or force:
-        omc_hooks_path.parent.mkdir(parents=True, exist_ok=True)
-        omc_hooks_path.write_text(
-            _json.dumps(_default_hooks, ensure_ascii=False, indent=2) + "\n",
-            encoding="utf-8",
-        )
-        print(f"[install] wrote {omc_hooks_path.relative_to(tgt)}")
-    else:
-        # 기존 파일에 누락된 훅을 비침습적으로 추가
-        try:
-            existing = _json.loads(omc_hooks_path.read_text(encoding="utf-8"))
-            ss_hooks = existing.get("hooks", {}).get("session_start", [])
-            changed = False
-
-            # omc_context 훅 누락 시 추가
-            has_ctx = any(h.get("command", "").startswith("python3 scripts/omc_context") for h in ss_hooks)
-            if not has_ctx:
-                ss_hooks.insert(0, {"type": "shell", "command": "python3 scripts/omc_context.py --target ."})
-                changed = True
-
-            # auto_compact 훅 누락 시 추가 (context 다음, status 앞)
-            has_ac = any(h.get("name") == "auto_compact" for h in ss_hooks)
-            if not has_ac:
-                # context 훅 바로 뒤에 삽입
-                ctx_idx = next(
-                    (i for i, h in enumerate(ss_hooks) if h.get("command", "").startswith("python3 scripts/omc_context")),
-                    0,
-                )
-                ss_hooks.insert(ctx_idx + 1, {"type": "builtin", "name": "auto_compact"})
-                changed = True
-
-            if changed:
-                existing.setdefault("hooks", {})["session_start"] = ss_hooks
-                omc_hooks_path.write_text(
-                    _json.dumps(existing, ensure_ascii=False, indent=2) + "\n",
-                    encoding="utf-8",
-                )
-                print(f"[install] updated {omc_hooks_path.relative_to(tgt)} (added missing hooks)")
-        except Exception:
-            pass
-
-    # Git pre-commit hook — universal physical guard (works for ALL LLMs)
-    pre_commit_template = templates / "pre-commit"
-    if pre_commit_template.exists():
-        git_hooks_dir = tgt / ".git" / "hooks"
-        if git_hooks_dir.exists():
-            dst = git_hooks_dir / "pre-commit"
-            _copy(pre_commit_template, dst, force=force)
-            _ensure_executable(dst)
-        else:
-            # .git 없으면 scripts/ 에 복사해두고 안내 출력
-            dst = tgt / "scripts" / "pre-commit.sample"
-            _copy(pre_commit_template, dst, force=force)
-            print(
-                "[INFO] .git/hooks/ 폴더 없음 — pre-commit hook 을 수동으로 설치하세요:\n"
-                "  git init  (아직 git repo가 아닌 경우)\n"
-                "  cp scripts/pre-commit.sample .git/hooks/pre-commit\n"
-                "  chmod +x .git/hooks/pre-commit\n"
-                "  또는: python3 scripts/omc_doctor.py --fix"
-            )
-
-    post_commit_template = templates / "post-commit"
-    if post_commit_template.exists():
-        _install_completion_hook(post_commit_template, tgt, force=force)
+    if not omc_hooks_path.exists():
+        _write_generated_file(omc_hooks_path, json.dumps({
+            "version": 1, "hooks": {
+                "session_start": [], "session_end": [],
+                "pre_compact": [], "post_compact": [],
+            },
+        }, indent=2) + "\n", force=False)
 
     print(f"Installed OMC kit into: {tgt}")
 

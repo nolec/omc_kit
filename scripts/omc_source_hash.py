@@ -92,11 +92,12 @@ def _iter_template_files(source_kit: Path) -> Iterator[Path]:
     for root, directories, files in os.walk(templates, onerror=_raise_scan_error):
         directories[:] = sorted(
             name for name in directories if name not in _EXCLUDED_DIRECTORIES
+            and name not in {".claude", ".gemini", ".cursor", ".agent"}
         )
         root_path = Path(root)
         for name in sorted(files):
             path = root_path / name
-            if _is_candidate_file(source_kit, path):
+            if _is_candidate_file(source_kit, path) and path.name not in {"CLAUDE.md", "GEMINI.md", ".cursorignore", "pre-commit", "post-commit"}:
                 yield path
 
 

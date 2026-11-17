@@ -1,5 +1,5 @@
 ---
-skill_name: omc-[NAME]
+name: omc-[NAME]
 description: "[한 줄 설명]. 트리거: [트리거 키워드1], [트리거 키워드2]. [핵심 제약 1줄]."
 ---
 

@@ -274,9 +274,7 @@ def test_dashboard_skill_is_installed_on_both_agent_surfaces() -> None:
         assert (
             target / ".agents" / "skills" / "omc-dashboard" / "SKILL.md"
         ).read_text(encoding="utf-8") == expected
-        assert (
-            target / ".agent" / "skills" / "omc-dashboard" / "SKILL.md"
-        ).read_text(encoding="utf-8") == expected
+        assert not (target / '.agent').exists()
 
 
 def test_dashboard_skill_has_a_bounded_input_and_mutation_contract() -> None:

@@ -46,26 +46,10 @@ def _slice_between(text: str, start: str, end: str | None = None) -> str:
     return text[start_idx:end_idx]
 
 
-def test_template_claude_commands_include_recommendation_contract() -> None:
-    for name in COMMAND_FILES:
-        _assert_recommendation_contract(TEMPLATES / ".claude" / "commands" / f"{name}.md")
 
 
-def test_claude_review_recommendation_matches_skill_intent() -> None:
-    full_text = _read(CLAUDE_REVIEW)
-    review_section = _slice_between(full_text, "# /review", "$ARGUMENTS가 있으면 해당 파일/범위만 리뷰합니다.")
-    text = _slice_between(full_text, "## 다음 추천")
-    assert "판정" in review_section or "VERDICT" in review_section
-    assert "APPROVE/APPROVE WITH NOTES + 배포 준비" in text
-    assert "그 외" in text
-    assert "판정만으로 리뷰를 끝내지 않습니다." in text
 
 
-def test_gemini_review_documents_single_primary_recommendation() -> None:
-    text = _slice_between(_read(GEMINI_COMMANDS), "## /review", "## /investigate")
-    assert "주추천 1개" in text
-    assert "자동으로 진행하지는 않습니다." in text
-    assert "APPROVE/APPROVE WITH NOTES + 배포 준비" in text
 
 
 def test_codex_review_documents_single_primary_recommendation() -> None:
@@ -73,17 +57,3 @@ def test_codex_review_documents_single_primary_recommendation() -> None:
     assert "주추천 1개" in text
     assert "자동으로 진행하지는 않습니다." in text
     assert "APPROVE/APPROVE WITH NOTES + 배포 준비" in text
-
-
-def test_gemini_critique_keeps_change_cost_checkpoint() -> None:
-    text = _slice_between(_read(GEMINI_COMMANDS), "### `/critique [계획/코드]`")
-    assert "변경 비용 추정" in text
-    assert "실질 효과 LOW + MINOR만" in text
-    assert "실질 효과 MED/HIGH" in text
-
-
-def test_ship_recommendation_does_not_authorize_followup_execution():
-    text = _read(TEMPLATES / '.claude/commands/ship.md')
-    assert '주추천 1개' in text
-    assert '사용자가 다음 스킬을 명시하기 전에는 진입하지 않는다' in text
-    assert 'environment_not_ready' in text and '품질 명령0회' in text

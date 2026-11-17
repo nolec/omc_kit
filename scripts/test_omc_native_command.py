@@ -252,8 +252,7 @@ def test_install_manifest_includes_shared_recognizer():
 
 def test_task_templates_describe_diagnostics_and_official_report(installed_omc_target):
     root=SCRIPTS.parent
-    pairs=[('templates/.agents/skills/omc-task/SKILL.md','.agents/skills/omc-task/SKILL.md'),
-           ('templates/.claude/commands/task.md','.claude/commands/task.md')]
+    pairs=[('templates/.agents/skills/omc-task/SKILL.md','.agents/skills/omc-task/SKILL.md')]
     for template,deployed in pairs:
         content=(root/template).read_bytes()
         assert content==(installed_omc_target/deployed).read_bytes()

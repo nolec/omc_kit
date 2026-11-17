@@ -1711,7 +1711,7 @@ def test_status_matches_latest_after_sequential_sync_session_role_change(tmp_pat
 
 def test_core_omc_skills_document_use_session_sync_step(installed_omc_target):
     expected_markers = {}
-    for skills_root in (installed_omc_target / ".agent" / "skills", installed_omc_target / ".agents" / "skills"):
+    for skills_root in (installed_omc_target / ".agents" / "skills",):
         plan_skill = skills_root / "omc-plan" / "SKILL.md"
         plan_workflow = skills_root / "omc-plan" / "references" / "workflow.md"
         plan_skill_text = plan_skill.read_text(encoding="utf-8")
@@ -1746,7 +1746,7 @@ def test_core_omc_skill_mirrors_stay_in_sync(installed_omc_target):
     ]
 
     for skill_name in skill_names:
-        agent_text = (installed_omc_target / ".agent" / "skills" / skill_name / "SKILL.md").read_text(encoding="utf-8")
+        agent_text = (ROOT / "templates" / ".agents" / "skills" / skill_name / "SKILL.md").read_text(encoding="utf-8")
         agents_text = (installed_omc_target / ".agents" / "skills" / skill_name / "SKILL.md").read_text(encoding="utf-8")
         assert agent_text == agents_text, f"{skill_name} mirror files diverged"
 
@@ -1755,8 +1755,7 @@ def test_core_omc_skill_mirrors_stay_in_sync(installed_omc_target):
 def test_generated_plan_guidance_pins_review_route_and_render_contract(
     installed_omc_target, guidance_source
 ):
-    paths = ['.agents/skills/omc-plan/references/workflow.md',
-             '.agent/skills/omc-plan/references/workflow.md', '.claude/commands/plan.md']
+    paths = ['.agents/skills/omc-plan/references/workflow.md']
     target = installed_omc_target
     if guidance_source == 'repository':
         target = ROOT
@@ -2341,10 +2340,6 @@ def test_guidance_tracked_and_installed_copies_match_source(guidance_surface):
     for skill in ['omc-task','omc-review']:
         expected=(ROOT/'templates/.agents/skills'/skill/'SKILL.md').read_bytes()
         assert (guidance_surface/'.agents/skills'/skill/'SKILL.md').read_bytes()==expected
-        mirror=guidance_surface/'.agent/skills'/skill/'SKILL.md'
-        # Repository's ignored task copy is not part of this change; both installed surfaces are.
-        if guidance_surface!=ROOT or skill=='omc-review':
-            assert mirror.read_bytes()==expected
 
 
 def test_guidance_preserves_existing_task_and_review_contracts():

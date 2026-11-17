@@ -276,8 +276,6 @@ python3 scripts/omc.py orchestrate \
 | 플랫폼 | 권장 입력 | 허용 입력 | fallback |
 |---|---|---|---|
 | Codex | `$omc-plan`, `$omc-task`, `$omc-review` | 자연어 키워드 요청 | `python3 scripts/omc.py ...` |
-| Claude Code | `/plan`, `/task`, `/review` | 추가 확인 전까지 slash command 유지 | `python3 scripts/omc.py ...` |
-| Gemini CLI | `/plan`, `/task`, `/review` | 자연어 요청 | `python3 scripts/omc.py ...` |
 
 ## 시작-멈춤-다음 추천
 
@@ -286,24 +284,18 @@ python3 scripts/omc.py orchestrate \
 | 플랫폼 | 권장 입력 | 기대 출력 | 멈춤 지점 | 다음 추천 |
 |---|---|---|---|---|
 | Codex | `$omc-plan 로그인 기능 설계` | CONTRACT, 최소 설계, TDD 태스크 | 설계 출력 직후 | `$omc-task` |
-| Claude Code | `/plan 로그인 기능 설계` | CONTRACT, 최소 설계, TDD 태스크 | 설계 출력 직후 | `/task` |
-| Gemini CLI | `/plan 로그인 기능 설계` | CONTRACT, 최소 설계, TDD 태스크 | 설계 출력 직후 | `/task` |
 
 ### 구현 요청
 
 | 플랫폼 | 권장 입력 | 기대 출력 | 멈춤 지점 | 다음 추천 |
 |---|---|---|---|---|
 | Codex | `$omc-task 로그인 버튼 구현` | CONTRACT, RED, GREEN, GATE, handoff | 구현 완료 + gate 통과 직후 | `$omc-review` |
-| Claude Code | `/task 로그인 버튼 구현` | CONTRACT, RED, GREEN, GATE, handoff | 구현 완료 + gate 통과 직후 | `/review` |
-| Gemini CLI | `/task 로그인 버튼 구현` | CONTRACT, RED, GREEN, GATE, handoff | 구현 완료 + gate 통과 직후 | `/review` |
 
 ### 리뷰 요청
 
 | 플랫폼 | 권장 입력 | 기대 출력 | 멈춤 지점 | 다음 추천 |
 |---|---|---|---|---|
 | Codex | `$omc-review` | 치명/중대/경미/제안 분류 리뷰 | 리뷰 출력 직후 | `$omc-ship` 또는 사용자 선택 대기 |
-| Claude Code | `/review` | 치명/중대/경미/제안 분류 리뷰 | 리뷰 출력 직후 | `/ship` 또는 사용자 선택 대기 |
-| Gemini CLI | `/review` | 치명/중대/경미/제안 분류 리뷰 | 리뷰 출력 직후 | `/ship` 또는 사용자 선택 대기 |
 
 ## 운영 메모
 
@@ -313,7 +305,6 @@ python3 scripts/omc.py orchestrate \
 - `omc-hub-push.sh`는 구형 hook 호출 호환을 위한 조용한 exit 0 stub입니다. 신규 설치 템플릿에는 Hub 자동 실행 지시가 없습니다.
 - non-force 재설치는 기존 실행 파일·hook을 보존하므로 기존 사용처의 폐기 완료를 보장하지 않습니다.
 - force 업데이트도 소유권 정책을 따릅니다. 수정되었거나 프로젝트 소유인 잔여 rule은 임의 삭제하지 않고 설치 출력에 보고합니다.
-- 배포 대상에서 제거된 정확한 `.cursor/rules/omc-hub-sync.mdc`에 한해 이전 소유권·hash가 확인된 수정 regular file을 `policy=preserve`, `ownership=preserved`로 기록합니다. 반복 설치도 보존하며 source 일치를 주장하지 않습니다.
 - 이 보존 receipt의 strict audit 통과는 bookkeeping 정합성만 의미합니다. 잔여 Hub 지시의 안전성·폐기 완료를 뜻하지 않으며, 일반 managed drift와 symlink의 차단을 완화하지 않습니다.
 - 원본 구현 완료와 사용처 전환 완료는 별개입니다. rollout은 별도 승인하며 공유 `.omc/hub.path`와 skill-check 기능은 유지합니다.
 

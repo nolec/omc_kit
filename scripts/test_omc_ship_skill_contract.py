@@ -230,8 +230,7 @@ def test_invalid_ship_output_fixture_exposes_weak_release_gate():
 
 
 def test_ship_template_declares_one_next_action_and_environment_stop():
-    for path in (ROOT / 'templates/.agents/skills/omc-ship/SKILL.md',
-                 ROOT / 'templates/.claude/commands/ship.md'):
+    for path in (ROOT / 'templates/.agents/skills/omc-ship/SKILL.md',):
         text = path.read_text()
         assert '주추천 1개' in text
         assert 'environment_not_ready' in text
@@ -274,7 +273,7 @@ def test_fresh_install_uses_uncommitted_ship_and_skill_templates(tmp_path):
     for name, file in pairs:
         rel = Path('.agents/skills') / ('omc-' + name) / file
         template = ROOT / 'templates' / rel
-        for prefix in ('.agents', '.agent'):
+        for prefix in ('.agents',):
             generated = target / prefix / 'skills' / ('omc-' + name) / file
             assert generated.read_bytes() == template.read_bytes(), generated
             assert generated.stat().st_mode & 0o777 == template.stat().st_mode & 0o777, generated
@@ -282,7 +281,7 @@ def test_fresh_install_uses_uncommitted_ship_and_skill_templates(tmp_path):
     clean = subprocess.run(audit, cwd=ROOT, env={**os.environ, 'GIT_OPTIONAL_LOCKS': '0'},
                            capture_output=True, text=True, timeout=60)
     assert clean.returncode == 0, clean.stdout + clean.stderr
-    corrupted = target / '.agent/skills/omc-review/SKILL.md'
+    corrupted = target / '.agents/skills/omc-review/SKILL.md'
     corrupted.write_text(corrupted.read_text() + '\nlocal corruption\n')
     bad = subprocess.run(audit, cwd=ROOT, env={**os.environ, 'GIT_OPTIONAL_LOCKS': '0'},
                          capture_output=True, text=True, timeout=60)

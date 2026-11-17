@@ -708,6 +708,9 @@ def test_detached_public_capabilities_support_separate_record():
 @pytest.fixture
 def detached_case(tmp_path):
     import time, hashlib
+    # Keep relocation/sibling evidence inside this test-owned tmp_path.
+    tmp_path = tmp_path / "case"
+    tmp_path.mkdir()
     state=tmp_path/'.omc/state'; state.mkdir(parents=True)
     (state/'latest.json').write_text(json.dumps({'latest_confirmed_session_id':'s','latest_session_id':'s'}))
     ctx={'output_mode':'detached_v1','stage':'review','work_id':'s','session_id':'s',

@@ -193,8 +193,7 @@ def test_fixed_validation_template_requires_structured_test_receipt(project):
 
 
 @pytest.mark.parametrize('name', ['templates/.agents/skills/omc-task/SKILL.md',
-    'templates/.agents/skills/omc-task/references/verification.md',
-    'templates/.claude/commands/task.md'])
+    'templates/.agents/skills/omc-task/references/verification.md'])
 def test_fixed_test_receipt_instructions_match_template_schema(name):
     text = (SCRIPT.parent.parent/name).read_text()
     assert 'validation_commands_policy_sha256' in text

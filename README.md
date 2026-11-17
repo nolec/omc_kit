@@ -1,5 +1,11 @@
 # OMC - Orchestrated Multi-agent Craft
 
+## 현재 지원 범위
+
+Codex 스킬(`.agents/skills`)과 공통 엔진을 유지합니다. Claude Code·Gemini CLI·Cursor·Antigravity 전용 설치 지원은 제거했습니다.
+자동 세션·도구·Git 훅은 비활성입니다. 설치·재설치는 세션이나 기존 수동 라이프사이클 명령을 실행하지 않습니다.
+원본 저장소를 조회할 때 OMC 초기화 명령을 자동 실행하지 않습니다. 과거 실험·실패 기록은 현재 지원 상태와 구분해 보존합니다.
+
 ## 0.7.2 릴리스 · 2026-11-12
 
 릴리스 커밋 `d8a1c9e54824e042d5ead04c509be092c1c46172`의 전체 품질 검사에서 6,694개가 통과했고 기존 12곳을 재설치·strict 감사했습니다. 첫 검사 실패 이력과 기존 작업 보존 근거는 유지합니다. [0.7.2 범위](docs/releases/0.7.2.md)의 실행 전 문구는 후보 당시 기록입니다. 이후 통합 커밋은 같은 전체 검사나 재설치를 받지 않았습니다.
@@ -199,8 +205,7 @@ python3 scripts/omc_doctor.py --fix
 4. 세션 상태를 초기화합니다.
 
 ```bash
-OMC_EXECUTOR=codex python3 scripts/omc.py state init --target .
-OMC_EXECUTOR=codex python3 scripts/omc.py hook session_start --target .
+# 자동 초기화하지 않습니다. 승인된 작업 공간에서만 명시적으로 진입합니다.
 ```
 
 ## 사용 방법
@@ -308,9 +313,6 @@ envelope = run_review_in_snapshot(
 | 실행기 | 기본 진입점 | 설정 위치 |
 |---|---|---|
 | Codex | `$omc-plan`, `$omc-task`, `$omc-review` | `.agents/skills/`, `.codex/` |
-| Claude Code | `/plan`, `/task`, `/review` | `.claude/commands/`, `.claude/` |
-| Gemini CLI | `/plan`, `/task`, `/review` | `.gemini/commands/`, `.gemini/` |
-| Cursor | 자연어 요청 | `.cursor/rules/`, `.cursor/hooks/` |
 
 모든 실행기는 공통 규칙을 `AGENTS.md`에서 읽고, 실행기별 overlay는 각 개인 설정 영역에서 읽습니다.
 
@@ -353,10 +355,7 @@ omc_kit/
 │   ├── ETHOS.md              엔지니어링 원칙
 │   ├── CONVENTIONS.md        코딩 컨벤션
 │   ├── .agents/skills/       Codex skill 원본
-│   ├── .claude/              Claude commands/hooks
 │   ├── .codex/               Codex commands/hooks
-│   ├── .cursor/              Cursor rules/hooks
-│   ├── .gemini/              Gemini commands/hooks
 │   ├── .agent-hooks/         공통 hook 구현
 │   └── shared_tasks/         설치 대상 공통 task
 ├── docs/                     로드맵·운영 정책·설계 문서

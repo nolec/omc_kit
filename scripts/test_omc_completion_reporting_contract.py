@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 @pytest.mark.parametrize("stage", ["task", "review"])
-@pytest.mark.parametrize("platform", ["codex", "claude"])
+@pytest.mark.parametrize("platform", ["codex"])
 def test_completion_reporting_has_explicit_verification_boundaries(stage, platform):
     relative = (
         f"templates/.agents/skills/omc-{stage}/SKILL.md"
@@ -63,7 +63,7 @@ def test_installed_skill_copies_match_completion_reporting_source(stage, install
         assert legacy.read_bytes() == expected
 
 
-@pytest.mark.parametrize("platform", ["codex", "claude"])
+@pytest.mark.parametrize("platform", ["codex"])
 def test_task_requires_exact_status_first_line(platform):
     path = (
         "templates/.agents/skills/omc-task/SKILL.md"
@@ -82,7 +82,7 @@ def test_task_requires_exact_status_first_line(platform):
         assert marker in text
 
 
-@pytest.mark.parametrize("platform", ["codex", "claude"])
+@pytest.mark.parametrize("platform", ["codex"])
 def test_review_separates_manual_suggestion_from_machine_routing(platform):
     path = (
         "templates/.agents/skills/omc-review/SKILL.md"
@@ -112,7 +112,7 @@ def test_retained_failure_responses_are_not_accepted_as_success():
         parse_envelope(review)
 
 
-@pytest.mark.parametrize('relative', ['templates/.agents/skills/omc-task/SKILL.md', 'templates/.claude/commands/task.md'])
+@pytest.mark.parametrize('relative', ['templates/.agents/skills/omc-task/SKILL.md'])
 def test_task_final_contract_preserves_gate_record_and_separates_phase_record(relative):
     text=(ROOT/relative).read_text()
     assert '## Machine output contract' in text
@@ -124,7 +124,7 @@ def test_task_final_contract_preserves_gate_record_and_separates_phase_record(re
 
 def test_twelve_installed_surfaces_use_detached_output(installed_omc_target):
     skills=['plan','task','review','ship','critique','investigate']
-    for kind in ['codex','claude']:
+    for kind in ['codex']:
         for skill in skills:
             name=(f'.agents/skills/omc-{skill}/'+('references/workflow.md' if skill=='plan' else 'SKILL.md')
                   if kind=='codex' else f'.claude/commands/{skill}.md')

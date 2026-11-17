@@ -8,91 +8,52 @@ ROOT = Path(__file__).resolve().parent.parent
 
 
 @pytest.mark.parametrize('case', ['managed', 'modified', 'project_owned', 'other_drift', 'symlink'])
-def test_force_retirement_from_previous_install_receipt(tmp_path, case):
+def test_codex_force_install_preserves_foreign_receipt_files(tmp_path, case):
+    """Synthetic previous receipt: other IDE files are outside Codex ownership."""
     import json
-    import shutil
-
-    legacy_kit = tmp_path / 'legacy-kit'
-    tracked = subprocess.run(
-        ['git', 'ls-files', '-z'], cwd=ROOT, check=True, capture_output=True,
-    ).stdout.decode().split('\0')
-    # Build only from tracked source bytes, not credentials or local artifacts.
-    for relative in filter(None, tracked):
-        source = ROOT / relative
-        assert not source.is_symlink(), relative
-        if source.is_file():
-            destination = legacy_kit / relative
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(source, destination)
-    rule_name = 'omc-retired-other.mdc' if case == 'other_drift' else 'omc-hub-sync.mdc'
-    legacy_rule = legacy_kit / 'templates/.cursor/rules' / rule_name
-    legacy_rule.write_text('# Legacy Hub rule\npython3 scripts/omc_hub_push.py --push\n')
     target = tmp_path / 'consumer'
     target.mkdir()
-    rule = target / '.cursor/rules' / rule_name
-    if case == 'project_owned':
-        rule.parent.mkdir(parents=True)
-        rule.write_text('project-owned rule\n')
-    initial = subprocess.run([sys.executable, str(legacy_kit / 'scripts/install.py'), '--target', str(target)], text=True, capture_output=True)
+    command = [sys.executable, str(ROOT / 'scripts/install.py'), '--target', str(target)]
+    initial = subprocess.run(command, text=True, capture_output=True)
     assert initial.returncode == 0, initial.stdout + initial.stderr
-    previous = json.loads((target / '.omc/install-receipt.json').read_text())
-    relative_rule = str(rule.relative_to(target))
-    entry = previous['entries'][relative_rule]
-    assert entry['policy'] == ('preserve' if case == 'project_owned' else 'managed_exact')
-    assert rule.exists()
+    name = 'omc-retired-other.mdc' if case == 'other_drift' else 'omc-hub-sync.mdc'
+    rule = target / '.cursor/rules' / name
+    rule.parent.mkdir(parents=True)
+    rule.write_text('synthetic previous IDE rule\n')
+    relative = str(rule.relative_to(target))
+    receipt_path = target / '.omc/install-receipt.json'
+    previous = json.loads(receipt_path.read_text())
+    previous['entries'][relative] = {
+        'policy': 'preserve' if case == 'project_owned' else 'managed_exact',
+        'ownership': 'preserved' if case == 'project_owned' else 'exclusive_managed',
+        'source_sha256': install._sha256_file(rule),
+        'target_sha256': install._sha256_file(rule),
+        'status': 'preserved' if case == 'project_owned' else 'updated',
+        'setup_created': case != 'project_owned',
+    }
+    receipt_path.write_text(json.dumps(previous))
+    original_receipt = receipt_path.read_bytes()
+    preserved_receipt = tmp_path / 'synthetic-previous-receipt.json'
+    preserved_receipt.write_bytes(original_receipt)
     if case in {'modified', 'other_drift'}:
-        rule.write_text('user-modified managed rule\n')
+        rule.write_text('synthetic user modification\n')
     if case == 'symlink':
         external = tmp_path / 'external-rule'
         external.write_bytes(rule.read_bytes())
         rule.unlink()
         rule.symlink_to(external)
-    preserved = rule.read_bytes()
-    updated = subprocess.run(
-        [sys.executable, str(ROOT / 'scripts/install.py'), '--target', str(target), '--force'],
-        text=True, capture_output=True,
-    )
-    assert updated.returncode == 0, updated.stdout + updated.stderr
-    if case == 'managed':
-        assert not rule.exists()
-    else:
-        assert rule.read_bytes() == preserved
-        if case != 'other_drift':
-            assert relative_rule in updated.stdout
-    audit = subprocess.run(
-        [sys.executable, str(ROOT / 'scripts/omc_install_audit.py'), str(target), '--strict'],
-        text=True, capture_output=True,
-    )
-    if case in {'other_drift', 'symlink'}:
-        assert audit.returncode != 0, audit.stdout + audit.stderr
+    raw = rule.read_bytes()
+    for _ in range(2):
+        updated = subprocess.run(command + ['--force'], text=True, capture_output=True)
+        assert updated.returncode == 0, updated.stdout + updated.stderr
+        assert rule.read_bytes() == raw
         if case == 'symlink':
-            assert rule.is_symlink()
-            assert external.read_bytes() == preserved
-        current = json.loads((target / '.omc/install-receipt.json').read_text())
-        assert current['entries'][relative_rule]['policy'] != 'preserve'
-        return
-    assert audit.returncode == 0, audit.stdout + audit.stderr
-    if case != 'managed':
-        current = json.loads((target / '.omc/install-receipt.json').read_text())
-        kept = current['entries'][relative_rule]
-        assert kept['policy'] == 'preserve'
-        assert kept['ownership'] == 'preserved'
-        assert kept['source_sha256'] == ''
-    repeated = subprocess.run(
-        [sys.executable, str(ROOT / 'scripts/install.py'), '--target', str(target), '--force'],
-        text=True, capture_output=True,
-    )
-    assert repeated.returncode == 0, repeated.stdout + repeated.stderr
-    assert not rule.exists() if case == 'managed' else rule.read_bytes() == preserved
-    if case != 'managed':
-        current = json.loads((target / '.omc/install-receipt.json').read_text())
-        assert current['entries'][relative_rule]['ownership'] == 'preserved'
-        assert current['entries'][relative_rule]['policy'] == 'preserve'
-    audit = subprocess.run(
-        [sys.executable, str(ROOT / 'scripts/omc_install_audit.py'), str(target), '--strict'],
-        text=True, capture_output=True,
-    )
-    assert audit.returncode == 0, audit.stdout + audit.stderr
+            assert rule.is_symlink() and external.read_bytes() == raw
+        current = json.loads(receipt_path.read_text())
+        assert not any(n.startswith('.cursor/') for n in current['entries'])
+        assert preserved_receipt.read_bytes() == original_receipt
+        audit = subprocess.run([sys.executable, str(ROOT / 'scripts/omc_install_audit.py'), str(target), '--strict'], text=True, capture_output=True)
+        assert audit.returncode == 0, audit.stdout + audit.stderr
 
 @pytest.mark.parametrize('condition', ['source_present', 'ownership_unknown', 'hash_missing'])
 def test_retired_hub_preservation_requires_verified_scope(tmp_path, condition):
@@ -117,51 +78,26 @@ def test_retired_hub_preservation_requires_verified_scope(tmp_path, condition):
     assert rule.read_text() == 'modified'
 
 @pytest.mark.parametrize('force', [False, True])
-def test_install_surface_and_legacy_residue(tmp_path, force):
+def test_enabled_legacy_codex_hooks_block_install_without_mutation(tmp_path, force):
     target = tmp_path / 'consumer'
     target.mkdir()
-    script = target / 'scripts/omc_hub_push.py'
-    script.parent.mkdir()
-    script.write_text('print("legacy")\n')
-    rule = target / '.cursor/rules/omc-hub-sync.mdc'
-    rule.parent.mkdir(parents=True)
-    rule.write_text('project-owned legacy --push instruction\n')
-    for path in ('.claude/settings.json', '.cursor/hooks.json', '.codex/hooks.json'):
-        settings = target / path
-        settings.parent.mkdir(parents=True, exist_ok=True)
-        settings.write_text('{"hooks":{"PostToolUse":[{"hooks":[{"type":"command","command":".agent-hooks/omc-hub-push.sh"}]}]}}')
-    shell = target / '.agent-hooks/omc-hub-push.sh'
-    shell.parent.mkdir()
-    shell.write_text('#!/bin/bash\necho legacy-hook\n')
+    for name, content in {
+        'scripts/omc_hub_push.py': 'print("legacy")\n',
+        '.cursor/rules/omc-hub-sync.mdc': 'user-owned legacy instruction\n',
+        '.claude/settings.json': '{"user":"preserve"}',
+        '.codex/hooks.json': '{"hooks":{"PostToolUse":[{"hooks":[{"command":".agent-hooks/omc-hub-push.sh"}]}]}}',
+        '.agent-hooks/omc-hub-push.sh': '#!/bin/sh\necho user-original\n',
+    }.items():
+        p = target / name
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(content)
+    before = {str(p.relative_to(target)): p.read_bytes() for p in target.rglob('*') if p.is_file()}
     command = [sys.executable, str(ROOT / 'scripts/install.py'), '--target', str(target)]
-    if force:
-        command.append('--force')
-    result = subprocess.run(command, cwd=ROOT, text=True, capture_output=True)
-    assert result.returncode == 0, result.stdout + result.stderr
-    assert 'Hub retirement' in result.stdout
-    assert '.cursor/rules/omc-hub-sync.mdc' in result.stdout
-    assert rule.read_text() == 'project-owned legacy --push instruction\n'
-    invocation = subprocess.run([sys.executable, str(script), '--push'], text=True, capture_output=True)
-    assert invocation.returncode == (2 if force else 0)
-    hook_result = subprocess.run(['/bin/bash', str(shell)], text=True, capture_output=True)
-    assert hook_result.returncode == 0
-    assert hook_result.stdout == ('' if force else 'legacy-hook\n')
-    if force:
-        for path in ('.claude/settings.json', '.cursor/hooks.json', '.codex/hooks.json'):
-            content = (target / path).read_text()
-            assert 'omc-hub-push' not in content
-            assert 'session' in content.lower()
-        assert 'omc-post-file-check.sh' in (target / '.codex/hooks.json').read_text()
-    else:
-        for path in ('.claude/settings.json', '.cursor/hooks.json', '.codex/hooks.json'):
-            assert 'omc-hub-push.sh' in (target / path).read_text()
-
-def test_new_install_and_strict_audit(tmp_path):
-    result = subprocess.run([sys.executable, str(ROOT / 'scripts/install.py'), '--target', str(tmp_path)], cwd=ROOT, text=True, capture_output=True)
-    assert result.returncode == 0, result.stdout + result.stderr
-    assert not (tmp_path / '.cursor/rules/omc-hub-sync.mdc').exists()
-    result = subprocess.run([sys.executable, str(ROOT / 'scripts/omc_install_audit.py'), str(tmp_path), '--strict'], cwd=ROOT, text=True, capture_output=True)
-    assert result.returncode == 0, result.stdout + result.stderr
+    result = subprocess.run(command + (['--force'] if force else []), text=True, capture_output=True)
+    assert result.returncode != 0
+    assert 'automatic hooks must be disabled' in result.stdout + result.stderr
+    assert before == {str(p.relative_to(target)): p.read_bytes() for p in target.rglob('*') if p.is_file()}
+    assert not (target / '.omc').exists()
 
 @pytest.mark.parametrize('args', [[], ['--push'], ['--dry-run'], ['-m', 'legacy']])
 def test_retired_cli(tmp_path, args):
@@ -206,7 +142,12 @@ def test_shell_no_external_calls(tmp_path):
 
 def test_templates_no_hub_automation():
     import json
-    for path in ('.claude/settings.json', '.cursor/hooks.json', '.codex/hooks.json'):
+    # Removing payload may leave empty containers; files and links are still forbidden.
+    for name in ('.claude', '.cursor'):
+        foreign = ROOT / 'templates' / name
+        assert not foreign.is_symlink() and not foreign.is_file(), foreign
+        assert not any(p.is_file() or p.is_symlink() for p in foreign.rglob('*')), foreign
+    for path in ('.codex/hooks.json',):
         content = (ROOT / 'templates' / path).read_text()
         json.loads(content)
         assert 'omc-hub-push' not in content
@@ -221,3 +162,45 @@ def test_legacy_copy(tmp_path, force):
     result = subprocess.run([sys.executable, str(dst), '--push'], capture_output=True, text=True)
     assert result.returncode == (2 if force else 0)
     assert ('retired' in result.stderr.lower()) if force else result.stdout == 'legacy\n'
+
+def test_new_install_and_strict_audit(tmp_path):
+    result = subprocess.run([sys.executable, str(ROOT / 'scripts/install.py'), '--target', str(tmp_path)], cwd=ROOT, text=True, capture_output=True)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert not (tmp_path / '.cursor/rules/omc-hub-sync.mdc').exists()
+    result = subprocess.run([sys.executable, str(ROOT / 'scripts/omc_install_audit.py'), str(tmp_path), '--strict'], cwd=ROOT, text=True, capture_output=True)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.mark.parametrize('surface', ['.claude', '.cursor'])
+@pytest.mark.parametrize('shape', ['absent', 'empty', 'top_file', 'nested_file',
+                                  'root_link', 'broken_root_link', 'nested_link', 'broken_nested_link'])
+def test_foreign_template_payload_contract(tmp_path, monkeypatch, surface, shape):
+    # Empty containers are not deployable payload. Files and links remain forbidden.
+    root = tmp_path / 'synthetic-kit'
+    hooks = root / 'templates/.codex/hooks.json'
+    hooks.parent.mkdir(parents=True)
+    hooks.write_text('{"hooks":{}}')
+    foreign = root / 'templates' / surface
+    outside = tmp_path / 'external-evidence'
+    outside.mkdir()
+    (outside / 'raw.txt').write_text('synthetic external raw evidence\n')
+    if shape == 'empty':
+        (foreign / 'commands').mkdir(parents=True)
+    elif shape == 'top_file':
+        foreign.write_text('unexpected payload\n')
+    elif shape == 'nested_file':
+        (foreign / 'commands').mkdir(parents=True)
+        (foreign / 'commands/local.md').write_text('unexpected payload\n')
+    elif shape in {'root_link', 'broken_root_link'}:
+        foreign.symlink_to(outside if shape == 'root_link' else tmp_path / 'missing', target_is_directory=True)
+    elif shape in {'nested_link', 'broken_nested_link'}:
+        foreign.mkdir()
+        (foreign / 'linked').symlink_to(outside if shape == 'nested_link' else tmp_path / 'missing', target_is_directory=True)
+    monkeypatch.setattr(sys.modules[__name__], 'ROOT', root)
+    before = (outside / 'raw.txt').read_bytes()
+    if shape in {'absent', 'empty'}:
+        test_templates_no_hub_automation()
+    else:
+        with pytest.raises(AssertionError):
+            test_templates_no_hub_automation()
+    assert (outside / 'raw.txt').read_bytes() == before

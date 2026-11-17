@@ -117,6 +117,10 @@ def test_document_isolation_real_cli_preserves_original(tmp_path, monkeypatch):
     assert subprocess.check_output(['git', '-C', str(isolated), 'diff', '--cached', '--name-only']).strip() == b'docs/plan.md'
     subprocess.run(['git', '-C', str(isolated), 'commit', '-qm', 'document only'], check=True, capture_output=True)
     assert subprocess.check_output(['git', '-C', str(isolated), 'diff-tree', '--no-commit-id', '--name-only', '-r', 'HEAD']).strip() == b'docs/plan.md'
+    # Completion is explicit under the Codex manual policy, not a Git side effect.
+    assert not (isolated / '.git/hooks/post-commit').exists()
+    completed = subprocess.run([sys.executable, str(OMC), 'state', 'complete', '--target', str(isolated)], capture_output=True, text=True)
+    assert completed.returncode == 0, completed.stdout + completed.stderr
     completion = json.loads((isolated / '.omc/state/sessions' / state['latest_session_id'] / 'completion.json').read_text())
     assert completion['work_class'] == 'document_only' and completion['changed_paths'] == ['docs/plan.md']
     assert (original / '.git/index').read_bytes() == before_index

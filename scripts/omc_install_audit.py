@@ -10,6 +10,7 @@ from collections import Counter
 from functools import lru_cache
 from pathlib import Path
 
+from omc_hook_contract import codex_hooks_disabled
 from omc_git_hooks import resolve_completion_hook
 from omc_source_hash import source_sha256 as _source_sha256
 from omc_quality_gate import readiness as _quality_gate_readiness
@@ -261,6 +262,16 @@ def audit_target(
 ) -> dict[str, object]:
     resolved = target.resolve()
     completion_hook = completion_hook_readiness(resolved)
+    hook_policy_errors = []
+    codex_hooks = resolved / ".codex/hooks.json"
+    if codex_hooks.exists() or codex_hooks.is_symlink():
+        try:
+            disabled = (not codex_hooks.is_symlink() and not codex_hooks.parent.is_symlink()
+                        and codex_hooks_disabled(json.loads(codex_hooks.read_text(encoding="utf-8"))))
+        except (OSError, ValueError, TypeError):
+            disabled = False
+        if not disabled:
+            hook_policy_errors.append("hooks:automatic-execution-enabled-or-invalid")
     legacy_dir = resolved / "omc_kit" / "templates"
     metadata_path = _metadata_path(resolved)
     receipt_path = _receipt_path(resolved)
@@ -345,8 +356,8 @@ def audit_target(
             "version_readiness": _version.source_workspace_readiness(resolved),
             "source_freshness_reason": None,
             "current_source_sha256": current_source_sha256,
-            "verification_status": "ok",
-            "verification_errors": [],
+            "verification_status": "failed" if hook_policy_errors else "ok",
+            "verification_errors": hook_policy_errors,
             "verification_notices": notices,
             "verification_issue_counts": {},
         }
@@ -357,7 +368,7 @@ def audit_target(
     elif has_metadata or legacy_dir.exists():
         status = "warn"
 
-    verification_errors: list[str] = []
+    verification_errors: list[str] = list(hook_policy_errors)
     verification_notices: list[str] = []
     if status != "ok":
         verification_errors.append(f"audit:{status}")

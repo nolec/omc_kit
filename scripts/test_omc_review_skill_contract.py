@@ -408,7 +408,7 @@ def test_review_copies_require_detached_output_contract():
 
 
 def test_tracked_antigravity_review_matches_current_template():
-    deployed = ROOT / '.agent/skills/omc-review/SKILL.md'
+    deployed = ROOT / '.agents/skills/omc-review/SKILL.md'
     template = ROOT / 'templates/.agents/skills/omc-review/SKILL.md'
     assert deployed.read_bytes() == template.read_bytes()
     assert deployed.stat().st_mode & 0o777 == template.stat().st_mode & 0o777

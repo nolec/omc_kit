@@ -94,6 +94,16 @@ class TestCompletionHookResolver(unittest.TestCase):
             self.assertEqual(result.reason, "manual_integration_required")
 
 
+def _configure_synthetic_completion_hook(repo: Path) -> None:
+    """Opt in only this disposable fixture; installer defaults remain disabled."""
+    hook = resolve_completion_hook(repo).install_hook_path
+    assert repo.resolve() in hook.resolve().parents
+    assert not hook.exists(), "the installer must not enable automatic Git hooks"
+    hook.parent.mkdir(parents=True, exist_ok=True)
+    hook.write_bytes((ROOT / "templates/post-commit").read_bytes())
+    hook.chmod(0o755)
+
+
 class TestCompletionHookExecution(unittest.TestCase):
     def test_commit_only_session_preserves_implementation_completion_candidate(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -115,6 +125,7 @@ class TestCompletionHookExecution(unittest.TestCase):
                 text=True,
             )
             self.assertEqual(install.returncode, 0, install.stdout + install.stderr)
+            _configure_synthetic_completion_hook(repo)
             env = {**os.environ, "XDG_CONFIG_HOME": str(root / "config")}
             subprocess.run(
                 [sys.executable, "scripts/omc_work_class_lock.py", "init", "--target", "."],
@@ -203,6 +214,7 @@ class TestCompletionHookExecution(unittest.TestCase):
                     text=True,
                 )
                 self.assertEqual(install.returncode, 0, install.stdout + install.stderr)
+                _configure_synthetic_completion_hook(repo)
 
                 env = os.environ.copy()
                 for name in (
@@ -297,6 +309,7 @@ def test_completion_classification_real_hook(tmp_path, backend, case):
     installed = subprocess.run([sys.executable, str(ROOT / 'scripts/install.py'),
         '--target', str(repo), '--force'], env=env, capture_output=True, text=True)
     assert installed.returncode == 0, installed.stdout + installed.stderr
+    _configure_synthetic_completion_hook(repo)
     hook = resolve_completion_hook(repo).install_hook_path
     original = hook.with_name('post-commit.omc-original')
     original.write_text('#!/bin/sh\nexit 7\n')

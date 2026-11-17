@@ -1291,8 +1291,6 @@ def test_all_llm_ship_surfaces_reference_shared_proposal_contract():
     paths = [
         ROOT / ".agents/skills/omc-ship/SKILL.md",
         ROOT / "templates/.agents/skills/omc-ship/SKILL.md",
-        ROOT / "templates/.claude/commands/ship.md",
-        ROOT / "templates/.gemini/commands/omc-commands.md",
     ]
 
     for path in paths:
@@ -1335,8 +1333,6 @@ def test_ship_surfaces_explain_portable_environment_preflight():
     for path in (
         ROOT / ".agents/skills/omc-ship/SKILL.md",
         ROOT / "templates/.agents/skills/omc-ship/SKILL.md",
-        ROOT / "templates/.claude/commands/ship.md",
-        ROOT / "templates/.gemini/commands/omc-commands.md",
     ):
         surface = path.read_text(encoding="utf-8")
         assert "environment_not_ready" in surface, path

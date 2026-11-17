@@ -7,6 +7,7 @@ import importlib.util
 from pathlib import Path
 import subprocess
 import sys
+import shutil
 
 import pytest
 from cryptography.hazmat.primitives import serialization
@@ -54,7 +55,9 @@ def _git(root: Path, *args: str) -> str:
     ).stdout.strip()
 
 
-def _closure_registry_repo(root: Path) -> tuple[Path, str, dict[str, object]]:
+def _closure_registry_repo(
+    root: Path, *, batch_id: str = "product-value-batch-20260826-v5-r1",
+) -> tuple[Path, str, dict[str, object]]:
     repository = root / "registry-repo"
     repository.mkdir()
     _git(repository, "init", "-q")
@@ -62,7 +65,7 @@ def _closure_registry_repo(root: Path) -> tuple[Path, str, dict[str, object]]:
     _git(repository, "config", "user.name", "Closure Test")
     registry_record = {
         "schema_version": 1,
-        "batch_id": "product-value-batch-20260826-v5-r1",
+        "batch_id": batch_id,
         "preregistration_sha256": "6" * 64,
     }
     registry_path = repository / ".omc" / "registry"
@@ -798,30 +801,35 @@ def test_omc_cli_exposes_product_value_evidence_surface() -> None:
     assert "--batch-id" in result.stdout
 
 
-def test_omc_cli_prepares_failure_closure_subject(tmp_path: Path) -> None:
+@pytest.mark.parametrize("registry_case", ["valid", "missing", "changed"])
+def test_omc_cli_prepares_failure_closure_subject(tmp_path: Path, registry_case: str) -> None:
     output = tmp_path / "closure-subject.json"
-    repository = Path.cwd()
-    registry_path = ".omc/registry/product-value-batch-20260826-v5-r1.json"
-    registry_record = json.loads(
-        (repository / registry_path).read_text(encoding="utf-8")
-    )
-    registry_commit = _git(
-        repository,
-        "log",
-        "-1",
-        "--format=%H",
-        "--",
-        registry_path,
-    )
+    # Explicitly synthetic fixture, not a reconstruction of a historical registry.
+    batch_id = "synthetic-codex-closure"
+    repository, registry_commit, registry_record = _closure_registry_repo(tmp_path, batch_id=batch_id)
+    source_scripts = Path(__file__).resolve().parent
+    scripts = repository / "scripts"
+    scripts.mkdir()
+    for name in ("omc.py", "omc_product_value_evidence_bundle.py",
+                 "omc_preregistration_registry.py", "omc_rfc3161_timestamp.py"):
+        shutil.copyfile(source_scripts / name, scripts / name)
+    registry_path = f".omc/registry/{batch_id}.json"
+    registry_file = repository / registry_path
+    if registry_case == "missing":
+        registry_file.unlink()
+    elif registry_case == "changed":
+        registry_file.write_text(json.dumps({**registry_record, "preregistration_sha256": "7" * 64}))
+    before = {str(p.relative_to(repository)): p.read_bytes()
+              for p in (repository / ".omc").rglob("*") if p.is_file()}
 
     result = subprocess.run(
         [
             sys.executable,
-            "scripts/omc.py",
+            str(scripts / "omc.py"),
             "product-value-evidence",
             "prepare-closure",
             "--batch-id",
-            "product-value-batch-20260826-v5-r1",
+            batch_id,
             "--preregistration-sha256",
             registry_record["preregistration_sha256"],
             "--registry-path",
@@ -844,9 +852,20 @@ def test_omc_cli_prepares_failure_closure_subject(tmp_path: Path) -> None:
         text=True,
     )
 
+    assert {str(p.relative_to(repository)): p.read_bytes()
+            for p in (repository / ".omc").rglob("*") if p.is_file()} == before
+    assert _git(repository, "rev-parse", "HEAD") == registry_commit
+    if registry_case != "valid":
+        assert result.returncode != 0
+        assert "closure_prepared" not in result.stdout
+        assert not output.exists()
+        return
     assert result.returncode == 0, result.stderr
     assert json.loads(result.stdout)["status"] == "closure_prepared"
-    assert json.loads(output.read_text(encoding="utf-8"))["execution_eligible"] is False
+    subject = json.loads(output.read_text(encoding="utf-8"))
+    assert subject["execution_eligible"] is False
+    assert subject["batch_id"] == batch_id
+    assert subject["registry_commit"] == registry_commit
 
 
 def test_omc_cli_rejects_closure_without_git_registry_anchor(tmp_path: Path) -> None:

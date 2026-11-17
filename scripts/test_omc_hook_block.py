@@ -122,35 +122,8 @@ def test_prompt_inject_no_warn_on_pending(tmp_path: Path) -> None:
     )
 
 
-def test_cursor_hook_denies_on_confirmed(tmp_path: Path) -> None:
-    """Cursor 훅: confirmed + create_file → permission:deny."""
-    _make_omc_state(tmp_path, status="confirmed")
-    scripts_dir = tmp_path / "scripts"
-    scripts_dir.mkdir()
-    (scripts_dir / "omc_pipeline_guard.py").write_text(
-        "import sys; sys.exit(0)\n", encoding="utf-8"
-    )
-    hook = ROOT / ".cursor" / "hooks" / "omc-pipeline-check.sh"
-    result = _run_pipeline_check(hook, tool_name="create_file", file_path="src/new.ts", cwd=tmp_path)
-    combined = result.stdout + result.stderr
-    assert '"permission": "deny"' in combined or "deny" in combined, (
-        f"confirmed 상태에서 create_file이 차단되어야 함\nstdout={result.stdout!r}\nstderr={result.stderr!r}"
-    )
 
 
-def test_cursor_hook_allows_on_pending(tmp_path: Path) -> None:
-    """Cursor 훅: pending + create_file → permission:allow."""
-    _make_omc_state(tmp_path, status="pending")
-    scripts_dir = tmp_path / "scripts"
-    scripts_dir.mkdir()
-    (scripts_dir / "omc_pipeline_guard.py").write_text(
-        "import sys; sys.exit(0)\n", encoding="utf-8"
-    )
-    hook = ROOT / ".cursor" / "hooks" / "omc-pipeline-check.sh"
-    result = _run_pipeline_check(hook, tool_name="create_file", file_path="src/new.ts", cwd=tmp_path)
-    assert '"permission": "allow"' in result.stdout or result.returncode == 0, (
-        f"pending 상태에서 create_file이 허용되어야 함\nstdout={result.stdout!r}\nstderr={result.stderr!r}"
-    )
 
 
 def test_claude_hook_exits2_on_confirmed(tmp_path: Path) -> None:

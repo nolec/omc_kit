@@ -5,7 +5,6 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 DOC = ROOT / "docs" / "orchestration_usage.md"
-AGENTS = ROOT / "AGENTS.md"
 AGENTS_TEMPLATE = ROOT / "templates" / "AGENTS.md"
 
 
@@ -27,46 +26,25 @@ def test_orchestration_usage_doc_exists_with_required_sections() -> None:
     assert not missing, f"missing orchestration usage sections: {missing}"
 
 
-def test_agents_references_orchestration_usage_doc() -> None:
-    text = AGENTS.read_text(encoding="utf-8")
-
-    required_markers = [
-        "오케스트레이션 사용 원칙",
-        "docs/orchestration_usage.md",
-        "Codex",
-        "Claude",
-        "Gemini",
-    ]
-    missing = [marker for marker in required_markers if marker not in text]
-    assert not missing, f"missing AGENTS orchestration markers: {missing}"
 
 
 def test_agents_template_references_orchestration_usage_doc() -> None:
     text = AGENTS_TEMPLATE.read_text(encoding="utf-8")
-
-    required_markers = [
-        "오케스트레이션 사용 원칙",
-        "docs/orchestration_usage.md",
-        "Codex",
-        "Claude",
-        "Gemini",
-    ]
-    missing = [marker for marker in required_markers if marker not in text]
-    assert not missing, f"missing AGENTS template orchestration markers: {missing}"
+    for marker in ["오케스트레이션 사용 원칙", "docs/orchestration_usage.md", "Codex"]:
+        assert marker in text
 
 
-def test_orchestration_usage_doc_keeps_claude_input_conservative() -> None:
+def test_orchestration_usage_doc_keeps_codex_input_explicit() -> None:
     text = DOC.read_text(encoding="utf-8")
+    assert "| Codex | `$omc-plan`, `$omc-task`, `$omc-review` | 자연어 키워드 요청 |" in text
+    assert "| Claude Code |" not in text
 
-    assert "| Claude Code | `/plan`, `/task`, `/review` | 자연어 요청 |" not in text
-    assert "Claude Code | `/plan`, `/task`, `/review` |" in text
 
-
-def test_orchestration_usage_doc_uses_single_gemini_input_style() -> None:
+def test_orchestration_usage_doc_uses_single_supported_input_style() -> None:
     text = DOC.read_text(encoding="utf-8")
-
     assert "command entry" not in text
-    assert "| Gemini CLI | `/plan`, `/task`, `/review` |" in text
+    assert "| Gemini CLI |" not in text
+    assert "`python3 scripts/omc.py ...`" in text
 
 
 def test_orchestration_usage_doc_separates_big_plan_from_small_autopilot_units() -> None:

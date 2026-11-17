@@ -11,43 +11,7 @@ HOOK_CONTRACT_MARKERS = (
 
 HOOK_CONTRACT_SUMMARY = " / ".join(HOOK_CONTRACT_MARKERS)
 
-CLAUDE_HOOK_CONTRACT = {
-    "session_context": {
-        "label": ".claude/settings.json (SessionStart + UserPromptSubmit hook)",
-        "issue": "session bootstrap",
-        "required_hooks": ("SessionStart", "UserPromptSubmit"),
-        "commands": (
-            ".agent-hooks/omc-session-start.sh claude",
-            ".agent-hooks/omc-prompt-inject.sh claude",
-        ),
-    },
-    "pre_mutate_guard": {
-        "label": ".claude/settings.json (PreToolUse hook)",
-        "issue": "pre-mutate guard",
-        "required_hooks": ("PreToolUse",),
-        "matcher": "Write|Edit|MultiEdit",
-        "command": ".agent-hooks/omc-pipeline-check.sh",
-    },
-}
 
-GEMINI_HOOK_CONTRACT = {
-    "session_context": {
-        "label": ".gemini/settings.json (SessionStart + BeforeAgent hook)",
-        "issue": "session bootstrap",
-        "required_hooks": ("SessionStart", "BeforeAgent"),
-        "commands": (
-            ".agent-hooks/omc-session-start.sh gemini",
-            ".agent-hooks/omc-before-agent.sh",
-        ),
-    },
-    "pre_mutate_guard": {
-        "label": ".gemini/settings.json (BeforeTool hook)",
-        "issue": "pre-mutate guard",
-        "required_hooks": ("BeforeTool",),
-        "matcher": "write_file|replace",
-        "command": ".agent-hooks/omc-pipeline-check.sh",
-    },
-}
 
 CODEX_HOOK_CONTRACT = {
     "session_context": {
@@ -77,8 +41,6 @@ CODEX_HOOK_CONTRACT = {
 
 def _platform_hook_contracts() -> dict[str, dict]:
     return {
-        "claude": CLAUDE_HOOK_CONTRACT,
-        "gemini": GEMINI_HOOK_CONTRACT,
         "codex": CODEX_HOOK_CONTRACT,
     }
 
@@ -176,20 +138,12 @@ def contract_issues(data: dict, platform: str) -> list[str]:
     return issues
 
 
-def claude_has_session_context_hooks(data: dict) -> bool:
-    return evaluate_hook_contract(data, "claude", "session_context")
 
 
-def claude_has_pre_mutate_guard(data: dict) -> bool:
-    return evaluate_hook_contract(data, "claude", "pre_mutate_guard")
 
 
-def gemini_has_session_context_hooks(data: dict) -> bool:
-    return evaluate_hook_contract(data, "gemini", "session_context")
 
 
-def gemini_has_pre_mutate_guard(data: dict) -> bool:
-    return evaluate_hook_contract(data, "gemini", "pre_mutate_guard")
 
 
 def codex_has_session_context_hooks(data: dict) -> bool:
@@ -204,13 +158,18 @@ def codex_has_posttooluse_soft_guard(data: dict) -> bool:
     return evaluate_hook_contract(data, "codex", "post_mutate_soft_guard")
 
 
-def claude_contract_issues(data: dict) -> list[str]:
-    return contract_issues(data, "claude")
 
 
-def gemini_contract_issues(data: dict) -> list[str]:
-    return contract_issues(data, "gemini")
 
 
 def codex_contract_issues(data: dict) -> list[str]:
     return contract_issues(data, "codex")
+
+
+def codex_hooks_disabled(data: dict) -> bool:
+    """Validate an explicit disabled event map; malformed or executable hooks fail."""
+    if not isinstance(data, dict) or not isinstance(data.get("hooks"), dict):
+        return False
+    hooks = data["hooks"]
+    required = {"SessionStart", "PreToolUse", "UserPromptSubmit", "PostToolUse"}
+    return required.issubset(hooks) and all(isinstance(v, list) and not v for v in hooks.values())

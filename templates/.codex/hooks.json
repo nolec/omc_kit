@@ -1,55 +1,8 @@
 {
   "hooks": {
-    "SessionStart": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": ".agent-hooks/omc-session-start.sh codex",
-            "name": "omc-session-start",
-            "description": "OMC 세션 컨텍스트 + BM25 교훈 자동 주입"
-          }
-        ]
-      }
-    ],
-    "PreToolUse": [
-      {
-        "matcher": "Bash|apply_patch|Write",
-        "hooks": [
-          {
-            "type": "command",
-            "command": ".agent-hooks/omc-pipeline-check.sh",
-            "name": "omc-pipeline-check",
-            "description": "파이프라인 가드 — CONTRACT 미등록 셸/파일 차단 (exit 2, Codex 표준)"
-          }
-        ]
-      }
-    ],
-    "UserPromptSubmit": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": ".agent-hooks/omc-prompt-inject.sh codex",
-            "name": "omc-prompt-inject",
-            "description": "사용자 메시지 기반 BM25 교훈 자동 주입",
-            "timeout": 10
-          }
-        ]
-      }
-    ],
-    "PostToolUse": [
-      {
-        "matcher": "apply_patch|Write",
-        "hooks": [
-          {
-            "type": "command",
-            "command": ".agent-hooks/omc-post-file-check.sh",
-            "name": "omc-post-file-check",
-            "description": "파일 수정 후 세션 미확인이면 CONTRACT 유도 경고 (소프트 가드)"
-          }
-        ]
-      }
-    ]
+    "SessionStart": [],
+    "PreToolUse": [],
+    "UserPromptSubmit": [],
+    "PostToolUse": []
   }
 }

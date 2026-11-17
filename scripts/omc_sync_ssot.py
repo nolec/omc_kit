@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """
-omc_sync_ssot.py — SSOT 동기화 자동화
+omc_sync_ssot.py — Codex·공통 파일의 명시적 SSOT 동기화
 
-라이브 프로젝트 파일을 omc_kit/templates/ 로 복사합니다.
+기존 목적지 ROOT/omc_kit을 유지하며, 라이브 공통 스크립트와 Codex 문서를 복사합니다.
+외부 source 등록 해석·설치·자동 훅 활성화는 수행하지 않습니다.
 차이가 있는 파일은 경고, 없으면 ✅ 출력.
 
 사용:
@@ -35,21 +36,9 @@ def _is_managed_agent_skill(relative_path: Path) -> bool:
 SYNC_MAP: list[tuple[str, str]] = [
     # scripts
     *[(f"scripts/{p.name}", f"scripts/{p.name}") for p in (ROOT / "scripts").glob("omc_*.py")],
-    # cursor rules
-    *[
-        (f".cursor/rules/{p.name}", f"templates/.cursor/rules/{p.name}")
-        for p in (ROOT / ".cursor" / "rules").glob("omc-*.mdc")
-    ],
-    *[
-        (f".cursor/rules/{p.name}", f"templates/.cursor/rules/{p.name}")
-        for p in (ROOT / ".cursor" / "rules").glob("bm-*.mdc")
-        if p.name not in {"bm-block-patterns.mdc"}  # sixshop 전용 — 공통 킷 제외
-    ],
-    # AGENTS / CLAUDE / GEMINI / CODEX top-level docs
+    # Shared and Codex top-level documents
     ("AGENTS.md", "templates/AGENTS.md"),
-    ("CLAUDE.md", "templates/CLAUDE.md"),
-    ("GEMINI.md", "templates/GEMINI.md"),
-    ("CODEX.md",  "templates/CODEX.md"),
+    ("CODEX.md", "templates/CODEX.md"),
     # Agent Skills canonical source
     *[
         (
@@ -66,12 +55,7 @@ SYNC_MAP: list[tuple[str, str]] = [
         for p in (ROOT / ".codex" / "commands").glob("*.md")
         if (ROOT / ".codex" / "commands").exists()
     ],
-    # .gemini (settings.json + commands/)
-    *[
-        (f".gemini/{p.relative_to(ROOT / '.gemini')}", f"templates/.gemini/{p.relative_to(ROOT / '.gemini')}")
-        for p in (ROOT / ".gemini").rglob("*")
-        if p.is_file() and (ROOT / ".gemini").exists()
-    ],
+
 ]
 
 

@@ -27,7 +27,7 @@ def test_repository_does_not_ship_legacy_nested_installer() -> None:
 
 
 def test_installed_ssot_rule_uses_recorded_source_path() -> None:
-    rule = ROOT / "templates" / ".cursor" / "rules" / "omc-ssot.mdc"
+    rule = ROOT / "templates" / "CODEX.md"
     text = rule.read_text(encoding="utf-8")
 
     assert ".omc/install-source.json" in text

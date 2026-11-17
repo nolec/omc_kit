@@ -4,6 +4,10 @@
 
 이 문서는 OMC/멀티비서 킷을 다른 프로젝트로 옮길 때 무엇을 가져가야 하는지 빠르게 판단하기 위한 공통 지도입니다.
 
+## Codex 전용 지원
+
+Codex 스킬과 공통 엔진만 배포합니다. 자동 세션·도구·Git 훅은 비활성입니다. 실제 프로젝트 설치는 별도 요청으로만 수행합니다.
+
 ## SSOT
 
 공통 킷의 SSOT는 설치 receipt가 기록한 source checkout입니다.
@@ -21,8 +25,6 @@ source checkout이 우연히 `omc_kit/`이라는 이름으로 배치될 수는 �
 
 선택:
 - `AGENTS.md` (강권 — 세션 시작 훅이 자동 생성하지만 커스터마이즈 가능)
-- `.claude/CLAUDE.md` (Claude Code 개인 오버레이)
-- `.gemini/GEMINI.md` (Gemini CLI 개인 오버레이)
 - `project_prompts/` (도메인 role/profile 오버레이)
 
 가져가지 않아도 되는 것:
@@ -37,20 +39,14 @@ omc_kit/
   scripts/          ← 공용 실행·검증 스크립트 SSOT
   templates/        ← SSOT 템플릿 (install.py가 배포)
     AGENTS.md         공통 에이전트 규칙 (모든 LLM)
-    CLAUDE.md         Claude Code 오버레이 템플릿
-    GEMINI.md         Gemini CLI 오버레이 템플릿
-    .claude/commands/ Claude Code 슬래시 커맨드 (개별 md 파일)
-    .gemini/commands/ Gemini CLI 커맨드 참조 (omc-commands.md)
     .codex/commands/  Codex CLI 커맨드 참조 (/project: 네임스페이스)
-    .cursor/rules/    Cursor 규칙 (omc-always.md)
-    .agent-hooks/     공용 훅 스크립트 (Claude/Codex/Gemini 공통)
+    .agent-hooks/     명시적으로 호출하는 공용 훅 스크립트
       omc-pipeline-check.sh   파일 수정 전 세션/TDD 파이프라인 차단
       omc-prompt-inject.sh    UserPromptSubmit — BM25 교훈 주입 + 모호 메시지 감지
       omc-post-file-check.sh  PostToolUse — 세션 미확인 파일 수정 경고 (소프트 가드)
       omc-session-start.sh    세션 시작 훅
       omc-session-end.sh      세션 종료 훅
-    .agents/skills/   Codex + Antigravity Agent Skills (SSOT — plural)
-    .agent/           Antigravity IDE 전용
+    .agents/skills/   Codex Agent Skills (SSOT — plural)
       workflows/        명시적 슬래시 커맨드 (/plan, /task 등)
       rules/            항상 적용 규칙 (omc-always.md)
       skills/           암묵적 트리거 스킬 (.agents/skills/ 의 미러)
@@ -58,8 +54,6 @@ omc_kit/
   prompts/          ← 역할/모드 프롬프트
 
 AGENTS.md           ← 공통 에이전트 규칙 (모든 LLM)
-.claude/CLAUDE.md   ← Claude Code 개인 오버레이 (선택)
-.gemini/GEMINI.md   ← Gemini CLI 개인 오버레이 (선택)
 project_prompts/    ← 현재 프로젝트 도메인 role/profile (선택)
 .omc/               ← 런타임 상태 (세션, 교훈, 비용, autopilot 기록)
 ```

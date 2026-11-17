@@ -8,6 +8,10 @@
 - 세션이 50개 이상 쌓이면 `auto_compact`가 자동으로 최근 25개만 보존합니다.
 - 교훈이 쌓일수록 BM25가 현재 작업과 관련된 교훈을 자동 주입합니다.
 
+## 자동 실행 정책
+
+자동 세션·도구·Git 훅은 비활성입니다. 세션 시작 시 초기화 명령을 자동 실행하지 않습니다. 아래 CLI는 사용자가 요청한 작업 공간에서만 명시적으로 호출합니다.
+
 ## 팀 운영 루틴
 
 1. **요청 시작** — 역할 추천 + 컨펌
@@ -42,7 +46,7 @@ python3 scripts/omc.py "로그인 기능 구현해줘"
 ```
 
 내부 동작:
-- `session_start` 훅 실행 (컨텍스트 수집 → BM25 관련 교훈 주입 → auto_compact)
+- 자동 훅은 실행하지 않습니다. 필요한 컨텍스트·검증 명령만 승인된 작업 공간에서 명시적으로 실행합니다.
 - 역할/모드 자동 선택 → 컨펌 UI
 - 프롬프트 합성 → LLM 실행
 
@@ -138,26 +142,10 @@ python3 scripts/omc_chat.py --executor gemini "작업 요청"
 
 ---
 
-## 시나리오 8. 훅 커스터마이징
+## 시나리오 8. 수동 라이프사이클
 
-파일: `.omc/hooks.json`
-
-```json
-{
-  "hooks": {
-    "session_start": [
-      {"type": "shell", "command": "python3 scripts/omc_context.py --target ."},
-      {"type": "builtin", "name": "auto_compact"},
-      {"type": "builtin", "name": "refresh_notepad"}
-    ],
-    "session_end": [
-      {"type": "builtin", "name": "auto_compact"}
-    ]
-  }
-}
-```
-
----
+설치는 자동 훅을 활성화하지 않습니다. 기존 훅 설정은 보존하지만 실행하지 않습니다.
+라이프사이클 명령이 필요하면 그 부작용과 작업 범위를 확인한 뒤 명시적으로 실행합니다.
 
 ## 시나리오 9. TDD 파이프라인
 

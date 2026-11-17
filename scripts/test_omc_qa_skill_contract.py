@@ -161,23 +161,9 @@ def test_ignored_live_agent_qa_path_is_optional(tmp_path: Path):
     }
 
 
-def test_claude_qa_command_live_and_template_stay_identical():
-    texts = {
-        path.relative_to(ROOT).as_posix(): _read(path)
-        for path in REQUIRED_CLAUDE_QA_COMMAND_PATHS
-    }
-    canonical = texts["templates/.claude/commands/qa.md"]
-    mismatched = [name for name, text in texts.items() if text != canonical]
-    assert not mismatched, f"qa Claude command copies differ: {mismatched}"
-
 
 def test_qa_is_not_reclassified_into_standard_core_pipeline():
-    assert STANDARD_CORE_SEQUENCE_AGENTS in _read(ROOT / "AGENTS.md")
-    for path in (ROOT / "templates" / "CLAUDE.md", ROOT / "templates" / "GEMINI.md"):
-        text = _read(path)
-        assert STANDARD_CORE_SEQUENCE_OVERLAY in text, (
-            f"standard core sequence drifted in {path.relative_to(ROOT)}"
-        )
+    assert STANDARD_CORE_SEQUENCE_AGENTS in _read(ROOT / "templates/AGENTS.md")
 
 
 def test_qa_skill_stays_short_enough_to_scan():

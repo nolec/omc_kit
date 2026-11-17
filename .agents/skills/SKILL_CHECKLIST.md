@@ -17,7 +17,7 @@ SKILL.md 품질 체크리스트
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 [frontmatter]
-[ Q1 ] skill_name 필드 있음
+[ Q1 ] 디렉터리 이름과 일치하는 name 필드 있음
 [ Q2 ] description 필드에 트리거 키워드 포함
 
 [컨텍스트 수집]
@@ -53,162 +53,36 @@ cp .agents/skills/SKILL_TEMPLATE.md .agents/skills/omc-[NAME]/SKILL.md
 
 ---
 
-## Part 2 — 파일 등록 체크리스트
+## Part 2 — Codex 등록 확인
 
-## 스킬 이름: `omc-[NAME]`
+Codex는 `.agents/skills/omc-[NAME]/SKILL.md`에서 스킬을 발견합니다.
+다른 IDE의 파일이나 슬래시 커맨드 등록은 필요하지 않습니다.
 
-```
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-NEW SKILL REGISTRATION CHECKLIST
-스킬: omc-[NAME]
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+1. source kit에서는 `templates/.agents/skills/omc-[NAME]/SKILL.md`가 SSOT입니다.
+2. 설치 대상에서는 `.agents/skills/omc-[NAME]/SKILL.md`가 있어야 합니다.
+3. 공통 안내 파일 `.codex/commands/omc-commands.md`와 `AGENTS.md`를 유지합니다.
+   모든 스킬 이름을 이 정적 문서에 나열해야 발견되는 것은 아닙니다.
+4. 설치 소스가 등록돼 있으면 해당 SSOT와 스킬 바이트가 일치해야 합니다.
+   `.omc/install-source.json`의 `source_path`를 우선하고, 이 파일이 없을 때만
+   기존 `.omc/hub.path`를 호환 경로로 읽습니다. 잘못된 명시 등록은 건너뛰지 않습니다.
 
-[ 1 ] Canonical Agent Skill
-      파일: .agents/skills/omc-[NAME]/SKILL.md
-      확인: skill_name, description, 트리거 키워드 포함
-
-[ 2 ] Antigravity 설치 미러
-      파일: setup 후 .agent/skills/omc-[NAME]/SKILL.md
-      확인: install.py가 canonical skill과 동일하게 생성
-
-[ 3 ] Claude Code (Slash Command)
-      파일: .claude/commands/[NAME].md
-      확인: # /[NAME] 헤더, $ARGUMENTS 변수, 이후 액션 포함
-
-[ 4 ] Gemini CLI (Commands 통합 파일)
-      파일: .gemini/commands/omc-commands.md
-      확인: ### `/[NAME] [인자]` 섹션 추가
-
-[ 5 ] Codex CLI (Commands 통합 파일)
-      파일: .codex/commands/omc-commands.md
-      확인: $omc-[NAME] 호출 목록에 추가
-
-[ 6 ] AGENTS.md (커맨드 테이블)
-      위치: "선택 커맨드" 테이블 또는 "코어 커맨드" 테이블
-      확인: | `/[NAME] [인자]` | — | 설명 |
-
-[ 7 ] .cursor/rules/omc-commands.mdc
-      확인: ## /[NAME] [인자] 섹션 추가
-
-[ 8 ] .cursor/rules/omc-roles.mdc
-      확인: 트리거 키워드 테이블에 키워드 추가
-
-[ 9 ] OMC source checkout SSOT 동기화
-      커맨드:
-        OMC_KIT=$(cat .omc/hub.path)
-        cp .agents/skills/omc-[NAME]/SKILL.md $OMC_KIT/templates/.agents/skills/omc-[NAME]/SKILL.md
-        cp .claude/commands/[NAME].md          $OMC_KIT/templates/.claude/commands/[NAME].md
-        cp .gemini/commands/omc-commands.md    $OMC_KIT/templates/.gemini/commands/omc-commands.md
-        cp .codex/commands/omc-commands.md     $OMC_KIT/templates/.codex/commands/omc-commands.md
-        cp AGENTS.md                           $OMC_KIT/templates/AGENTS.md
-        cp .cursor/rules/omc-commands.mdc      $OMC_KIT/templates/.cursor/rules/omc-commands.mdc
-        cp .cursor/rules/omc-roles.mdc         $OMC_KIT/templates/.cursor/rules/omc-roles.mdc
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-완료 기준: 9개 항목 전부 체크
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-```
-
----
-
-## 빠르게 실행하는 방법 (자동화 스크립트)
+## 읽기 전용 검사
 
 ```bash
-# 스킬 이름만 바꿔서 실행
-SKILL_NAME="[NAME]"
-OMC_KIT=$(cat .omc/hub.path 2>/dev/null)
-if [ -z "$OMC_KIT" ] || [ ! -d "$OMC_KIT" ]; then
-  echo "오류: .omc/hub.path 없음 또는 경로 유효하지 않음"
-  echo "  python3 scripts/omc.py hub init 또는 echo /path/to/omc_kit > .omc/hub.path"
-  exit 1
-fi
-
-# 1: canonical 스킬 디렉토리 생성
-mkdir -p .agents/skills/omc-$SKILL_NAME
-cp .agents/skills/SKILL_TEMPLATE.md .agents/skills/omc-$SKILL_NAME/SKILL.md
-
-# 9: SSOT 동기화 (파일 작성 후 실행)
-mkdir -p $OMC_KIT/templates/.agents/skills/omc-$SKILL_NAME
-cp .agents/skills/omc-$SKILL_NAME/SKILL.md $OMC_KIT/templates/.agents/skills/omc-$SKILL_NAME/SKILL.md
-cp .claude/commands/$SKILL_NAME.md          $OMC_KIT/templates/.claude/commands/$SKILL_NAME.md
-cp .gemini/commands/omc-commands.md         $OMC_KIT/templates/.gemini/commands/omc-commands.md
-cp .codex/commands/omc-commands.md          $OMC_KIT/templates/.codex/commands/omc-commands.md
-cp AGENTS.md                                $OMC_KIT/templates/AGENTS.md
-cp .cursor/rules/omc-commands.mdc           $OMC_KIT/templates/.cursor/rules/omc-commands.mdc
-cp .cursor/rules/omc-roles.mdc              $OMC_KIT/templates/.cursor/rules/omc-roles.mdc
-```
-
----
-
-## 새 스킬이 안 보일 때 체크리스트
-
-설치 후 스킬이 목록에 뜨지 않는 3가지 원인:
-
-| # | 원인 | 해결 |
-|---|---|---|
-| 1 | SSOT 경로 오류 | `templates/.agents/skills/`에 있는지 확인. `.agent/skills/`에만 넣으면 install 시 무시됨 |
-| 2 | setup --force 미실행 | `python3 scripts/omc.py setup --target . --force` 재실행 |
-| 3 | Cursor 세션 캐시 | 스킬 파일 저장 후 Cursor 세션 재시작 (Cmd+Shift+P → "Reload Window") |
-
-**빠른 진단:**
-```bash
-# 1. 스킬이 실제로 설치됐는지 확인
+python3 scripts/omc_skill_check.py omc-review
 python3 scripts/omc_skill_check.py --all
-
-# 2. 누락된 스킬이 있으면 재설치
-python3 scripts/omc.py setup --target . --force
-
-# 3. 그래도 안 보이면 → Cursor 재시작
 ```
 
----
+필수 파일이 없거나 비어 있거나, 명시한 source가 잘못됐거나 스킬이 다르면 실패합니다.
+외부 source가 등록되지 않은 경우에만 선택 SSOT 대조를 건너뜁니다.
+스킬이 하나도 없는 `--all`은 성공이 아닙니다.
+이 검사는 파일·세션·원장·훅을 생성하거나 수정하지 않으며 작업 승인이나 완료를 뜻하지 않습니다.
 
-## 각 LLM 파일 최소 요구사항
+## 등록 오류를 고칠 때
 
-### `.agents/skills/omc-[NAME]/SKILL.md` (Agent Skills canonical source)
+원본 반영·설치는 명시적으로 승인된 범위에서만 합니다.
+자동 초기화나 훅 활성화, source 경로 추정 생성으로 오류를 우회하지 않습니다.
+설치된 파일만 수정하지 말고 등록된 source의 `templates/.agents/skills/`와 대조하세요.
+다른 도구의 설정을 다시 만들거나 기존 실패·승인 기록을 덮어쓰지 않습니다.
 
-`SKILL_TEMPLATE.md`를 복사해서 시작합니다. 최소 구조는 아래와 같습니다.
-
-```markdown
----
-skill_name: omc-[NAME]
-description: "[한 줄 설명]. 트리거: [트리거 키워드]. [핵심 제약]."
----
-
-# [스킬 제목]
-
-> **이 스킬을 쓰면 안 되는 상황**: ...
-
-## Step 0: 컨텍스트 수집
-
-> **AI는 아래 커맨드를 직접 실행하고 결과를 확인한다. 건너뛰지 않는다.**
-
-[커맨드 블록 + 2>/dev/null]
-
-수집 결과 연결:
-- [커맨드] → **항목 N** 에 반영
-
-## 실행 순서 / 출력 포맷
-...
-
-## 이후 액션
-...
-```
-
-### `.claude/commands/[NAME].md` (Claude Code)
-
-```markdown
-# /[NAME] — [제목]
-
-[한 줄 설명]
-
-## 언제 쓰나
-...
-
-## AI가 할 일
-...
-
----
-
-대상: $ARGUMENTS (미지정 시 [기본 동작])
-```
+검사기는 UTF-8 YAML frontmatter의 name·description을 PyYAML로 검증합니다. PyYAML이 없으면 실패하며 자동 설치하지 않습니다. `--all`은 선언 source·설치 영수증의 omc-* 목록도 대조합니다. 공용 보조 Git 스킬 `pr-create`는 이 OMC 검사 대상에서 제외합니다.

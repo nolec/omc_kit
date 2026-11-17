@@ -24,30 +24,17 @@ def _load_template_json(path_str: str) -> dict:
 
 def test_codex_template_satisfies_shared_contract():
     data = _load_template_hooks()
-    assert contract.codex_has_session_context_hooks(data)
-    assert contract.codex_has_posttooluse_soft_guard(data)
-    assert contract.codex_contract_issues(data) == []
+    assert contract.codex_hooks_disabled(data)
+    assert not contract.codex_has_session_context_hooks(data)
+    assert not contract.codex_has_posttooluse_soft_guard(data)
 
 
-def test_claude_template_satisfies_shared_contract():
-    data = _load_template_json("templates/.claude/settings.json")
-    assert contract.claude_has_session_context_hooks(data)
-    assert contract.claude_has_pre_mutate_guard(data)
 
 
-def test_gemini_template_satisfies_shared_contract():
-    data = _load_template_json("templates/.gemini/settings.json")
-    assert contract.gemini_has_session_context_hooks(data)
-    assert contract.gemini_has_pre_mutate_guard(data)
 
 
-def test_generic_contract_evaluator_handles_session_and_guard_keys():
-    codex = _load_template_hooks()
-    claude = _load_template_json("templates/.claude/settings.json")
 
-    assert contract.evaluate_hook_contract(codex, "codex", "session_context")
-    assert contract.evaluate_hook_contract(codex, "codex", "post_mutate_soft_guard")
-    assert contract.evaluate_hook_contract(claude, "claude", "pre_mutate_guard")
+
 
 
 def test_generic_contract_issue_builder_follows_platform_contract_keys():
@@ -58,17 +45,8 @@ def test_generic_contract_issue_builder_follows_platform_contract_keys():
             "PostToolUse": [],
         }
     }
-    claude = {
-        "hooks": {
-            "SessionStart": [{"hooks": [{"command": ".agent-hooks/omc-session-start.sh claude"}]}],
-            "UserPromptSubmit": [{"hooks": [{"command": ".agent-hooks/omc-prompt-inject.sh claude"}]}],
-        }
-    }
-
     assert contract.contract_issues(codex, "codex") == ["pre-mutate guard", "post-mutate soft guard"]
-    assert contract.contract_issues(claude, "claude") == ["pre-mutate guard"]
     assert contract.codex_contract_issues(codex) == contract.contract_issues(codex, "codex")
-    assert contract.claude_contract_issues(claude) == contract.contract_issues(claude, "claude")
 
 
 def test_codex_contract_reports_missing_soft_guard():

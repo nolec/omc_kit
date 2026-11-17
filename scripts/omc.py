@@ -773,9 +773,8 @@ def main() -> int:
             )
             if cohort_v2_code != 0:
                 raise SystemExit(cohort_v2_code)
-        if args.skip_session_start:
-            return 0
-        return _run_script(hook_script, ["session_start", "--target", str(target)])
+        # Setup never invokes lifecycle commands; they require explicit use.
+        return 0
 
     if args.command == "setup-ignore":
         migration_script = kit / "scripts" / "omc_setup_gitignore.py"

@@ -5,7 +5,6 @@ from pathlib import Path
 
 import omc_autopilot
 
-OBSERVED_TASK_PATH = Path(".omc/tasks/observed-collect.json")
 
 
 def _write_json(path: Path, data: dict) -> None:
@@ -1233,27 +1232,8 @@ def test_cmd_overview_does_not_treat_dry_run_only_observed_collect_as_real_valid
     assert "need more observed evidence before starting V4-B operational validation" in out
 
 
-def test_observed_collect_task_describes_v4b_preparation_gate() -> None:
-    payload = json.loads((Path.cwd() / OBSERVED_TASK_PATH).read_text(encoding="utf-8"))
-
-    assert payload["id"] == "observed-collect"
-    assert payload.get("operational_validation_stage") == "v4b_preparation"
-    assert payload.get("operational_validation_goal") == "prepare_v4b_operational_validation"
-    assert payload.get("completion_requires_real_runs") is True
 
 
-def test_observed_collect_task_exists_with_real_expect_checks() -> None:
-    payload = json.loads((Path.cwd() / OBSERVED_TASK_PATH).read_text(encoding="utf-8"))
-
-    assert payload["id"] == "observed-collect"
-    assert payload["executor"] == "auto"
-    assert payload.get("require_clean_scope") is True
-    assert payload["steps"], "observed collect task should define steps"
-    first_step = payload["steps"][0]
-    expect = first_step.get("expect") or {}
-    checks = expect.get("checks") or []
-    assert checks, "observed collect task should have expect checks"
-    assert all("echo 'expect 검증 예시" not in check.get("cmd", "") for check in checks)
 
 
 def test_save_pipeline_result_copies_complete_observed_output_schema_from_task_meta(

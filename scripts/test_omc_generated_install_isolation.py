@@ -15,25 +15,39 @@ import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
 SUBJECTS = [
-    'scripts/test_llm_autopilot_commands.py::test_deployed_claude_plan_matches_template',
+    'scripts/test_llm_autopilot_commands.py::test_deployed_codex_plan_matches_template',
     'scripts/test_omc_native_command.py::test_task_templates_describe_diagnostics_and_official_report',
     'scripts/test_omc_state_record_confirm.py::test_core_omc_skills_document_use_session_sync_step',
     'scripts/test_omc_state_record_confirm.py::test_core_omc_skill_mirrors_stay_in_sync',
 ]
 SHIP_INPUTS = [
     'templates/.agents/skills/omc-ship/SKILL.md',
-    'templates/.claude/commands/ship.md',
     'docs/omc_quality_gates.md',
     'scripts/test_omc_ship_entry_contract.py',
     'scripts/test_omc_generated_install_isolation.py',
 ]
 
-OUTPUT_INPUTS = ['docs/omc_quality_gates.md', 'docs/orchestration_usage.md', 'scripts/omc_autopilot.py', 'scripts/omc_output_contract.py', 'scripts/omc_pipeline_guard.py', 'scripts/omc_workflow_validation.py', 'scripts/test_llm_autopilot_commands.py', 'scripts/test_omc_codex_output_readability.py', 'scripts/test_omc_completion_reporting_contract.py', 'scripts/test_omc_generated_install_isolation.py', 'scripts/test_omc_output_contract.py', 'scripts/test_omc_ship_entry_contract.py', 'scripts/test_omc_task_completion_surface.py', 'scripts/test_omc_workflow_validation.py', 'templates/.agents/skills/omc-critique/SKILL.md', 'templates/.agents/skills/omc-investigate/SKILL.md', 'templates/.agents/skills/omc-plan/references/workflow.md', 'templates/.agents/skills/omc-review/SKILL.md', 'templates/.agents/skills/omc-ship/SKILL.md', 'templates/.agents/skills/omc-task/SKILL.md', 'templates/.agents/skills/omc-task/references/verification.md', 'templates/.claude/commands/critique.md', 'templates/.claude/commands/investigate.md', 'templates/.claude/commands/plan.md', 'templates/.claude/commands/review.md', 'templates/.claude/commands/ship.md', 'templates/.claude/commands/task.md']
+# Generated-target checks consume the entire current deployable candidate,
+# including uncommitted installer/contract changes, never stale HEAD code.
+import omc_source_hash
+OUTPUT_INPUTS = sorted(set(
+    str(p.relative_to(ROOT)) for p in omc_source_hash._iter_installable_source_files(ROOT)
+) | {
+    'docs/orchestration_usage.md', 'scripts/test_llm_autopilot_commands.py',
+    'scripts/test_omc_ship_entry_contract.py', 'scripts/test_omc_generated_install_isolation.py',
+    'scripts/test_omc_native_command.py', 'scripts/test_omc_state_record_confirm.py',
+    'scripts/test_omc_codex_output_readability.py', 'scripts/test_omc_completion_reporting_contract.py',
+    'scripts/test_omc_task_completion_surface.py', 'scripts/test_omc_output_contract.py',
+    'scripts/test_omc_workflow_validation.py',
+})
+
 
 def uninstalled_checkout(tmp_path):
     target = tmp_path / 'checkout'
     subprocess.run(['git', 'clone', '--shared', '--quiet', str(ROOT), str(target)],
                    check=True, capture_output=True, timeout=30)
+    for retired in ['templates/.claude', 'templates/.gemini', 'templates/.cursor', 'templates/.agent']:
+        shutil.rmtree(target / retired, ignore_errors=True)
     names = dict.fromkeys(['scripts/conftest.py',
                           *(n.split('::')[0] for n in SUBJECTS), *SHIP_INPUTS, *OUTPUT_INPUTS])
     for name in names:
@@ -98,7 +112,7 @@ def test_uninstalled_checkout_copies_exact_ship_candidate_inputs(tmp_path, monke
     subprocess.run(['git', 'clone', '--no-hardlinks', '--quiet', str(ROOT), str(source)],
                    check=True, capture_output=True, timeout=30)
     inputs = ['templates/.agents/skills/omc-ship/SKILL.md',
-              'templates/.claude/commands/ship.md', 'docs/omc_quality_gates.md',
+              'docs/omc_quality_gates.md',
               'scripts/test_omc_ship_entry_contract.py',
               'scripts/test_omc_generated_install_isolation.py']
     for name in OUTPUT_INPUTS:
@@ -147,9 +161,9 @@ def test_generated_checks_pass_without_installing_the_checkout(tmp_path):
 
 
 @pytest.mark.parametrize('defect,node,path', [
-    ('missing', SUBJECTS[0], '.claude/commands/plan.md'),
-    ('drift', SUBJECTS[0], '.claude/commands/plan.md'),
-    ('missing', SUBJECTS[3], '.agent/skills/omc-plan/SKILL.md'),
+    ('missing', SUBJECTS[0], '.agents/skills/omc-plan/SKILL.md'),
+    ('drift', SUBJECTS[0], '.agents/skills/omc-plan/SKILL.md'),
+    ('missing', SUBJECTS[3], '.agents/skills/omc-plan/SKILL.md'),
 ])
 def test_generated_checks_reject_missing_or_changed_install_output(tmp_path, defect, node, path):
     root = uninstalled_checkout(tmp_path)
@@ -163,7 +177,7 @@ def test_generated_checks_reject_missing_or_changed_install_output(tmp_path, def
     assert result.returncode == 1, result.stdout + result.stderr
     assert 'real installed target fixture required' not in result.stdout
     assert ('FileNotFoundError' in result.stdout or '파일 없음' in result.stdout
-            or 'deployed .claude/commands/plan.md가 template와 다름' in result.stdout)
+            or 'deployed Codex plan differs from template' in result.stdout)
 
 
 def test_install_fixture_surfaces_installer_failure(tmp_path, monkeypatch):
@@ -377,7 +391,7 @@ def test_installed_conditional_skill_references_match_ssot(installed_omc_target)
                              ('omc-task', 'verification.md'),
                              ('omc-review', 'release-and-mission.md')]:
         source = ROOT / 'templates/.agents/skills' / skill / 'references' / reference
-        for directory in ('.agents', '.agent'):
+        for directory in ('.agents',):
             installed = installed_omc_target / directory / 'skills' / skill / 'references' / reference
             assert installed.read_bytes() == source.read_bytes()
             text = (installed.parent.parent / 'SKILL.md').read_text()

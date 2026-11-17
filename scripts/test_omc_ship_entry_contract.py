@@ -17,8 +17,7 @@ import pytest
 
 
 ROOT = Path(__file__).resolve().parents[1]
-TEMPLATES = [Path('templates/.agents/skills/omc-ship/SKILL.md'),
-             Path('templates/.claude/commands/ship.md')]
+TEMPLATES = [Path('templates/.agents/skills/omc-ship/SKILL.md')]
 INPUTS = [*TEMPLATES, Path('docs/omc_quality_gates.md'),
           Path('scripts/test_omc_ship_entry_contract.py'),
           Path('scripts/test_omc_generated_install_isolation.py')]
@@ -412,7 +411,7 @@ def test_missing_runtime_is_preparation_failure_not_code_failure(subject):
 
 
 def test_ship_templates_share_one_contract():
-    assert read_contract(ROOT / TEMPLATES[0]) == read_contract(ROOT / TEMPLATES[1])
+    assert read_contract(ROOT / TEMPLATES[0]) == read_contract(ROOT / ".agents/skills/omc-ship/SKILL.md")
 
 
 @pytest.mark.parametrize('defect', ['exit', 'status', 'operation', 'target', 'cleanup', 'evidence', 'deadline', 'raw_hash'])
@@ -467,7 +466,7 @@ class SimpleClock:
 
 
 def test_installed_ship_entry_contract_matches_templates(installed_omc_target):
-    for template, output in zip(TEMPLATES, [Path('.agents/skills/omc-ship/SKILL.md'), Path('.claude/commands/ship.md')]):
+    for template, output in zip(TEMPLATES, [Path('.agents/skills/omc-ship/SKILL.md')]):
         generated = installed_omc_target / output
         assert generated.read_bytes() == (ROOT / template).read_bytes(), 'ship generated output mismatch'
         assert read_contract(generated) == read_contract(ROOT / template)

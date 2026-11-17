@@ -1,230 +1,183 @@
 #!/usr/bin/env python3
-"""
-omc_skill_check.py — OMC 스킬 등록 9개 항목 검증기
+"""Read-only Codex skill registration checks (single skill or --all)."""
+from __future__ import annotations
 
-사용법:
-  python3 scripts/omc_skill_check.py omc-critique
-  python3 scripts/omc_skill_check.py omc-critique --fix-hint
-  python3 scripts/omc_skill_check.py --all
-
-exit code:
-  0 = 모든 항목 통과
-  1 = 누락 항목 있음
-"""
-
-import sys
 import argparse
+import json
 from pathlib import Path
+import re
 
-ROOT = Path(__file__).parent.parent
+BASE = Path(__file__).resolve().parent.parent
+_TEMPLATES = BASE / 'templates'
+ROOT = _TEMPLATES if (not (BASE/'.omc/install-source.json').exists()
+    and not (BASE/'.omc/install-source.json').is_symlink()
+    and (_TEMPLATES/'.agents/skills').is_dir()
+    and (_TEMPLATES/'AGENTS.md').is_file()
+    and (BASE/'scripts/install.py').is_file()) else BASE
 
-# omc_kit 자체 내부에서 실행될 때: templates/ 하위를 ROOT로 사용
-# (설치된 프로젝트에서 실행될 때는 ROOT = 프로젝트 루트)
-_TEMPLATES = ROOT / "templates"
-if _TEMPLATES.exists() and (ROOT / "scripts" / "install.py").exists():
-    # omc_kit 자체에서 실행 중
-    ROOT = _TEMPLATES
 
-
-def _rel(p: Path, root: Path) -> Path:
-    """Python 3.8 호환 relative_to — 실패 시 절대 경로 반환."""
+def _rel(path: Path, root: Path) -> Path:
     try:
-        return p.relative_to(root)
+        return path.relative_to(root)
     except ValueError:
-        return p
+        return path
 
 
 def get_omc_kit_path() -> Path | None:
-    hub_path_file = ROOT / ".omc" / "hub.path"
-    if hub_path_file.exists():
-        p = hub_path_file.read_text().strip()
-        if p and Path(p).exists():
-            return Path(p)
-    return None
+    """Prefer current registration; invalid explicit metadata never falls back."""
+    if ROOT == _TEMPLATES:
+        return None  # Already checking the canonical templates, not an installed mirror.
+    metadata = BASE/'.omc/install-source.json'
+    legacy = BASE/'.omc/hub.path'
+    if metadata.exists() or metadata.is_symlink():
+        data = json.loads(metadata.read_text(encoding='utf-8'))
+        raw = data.get('source_path') if isinstance(data, dict) else None
+        if not isinstance(raw, str) or not raw.strip():
+            raise ValueError('invalid install-source.json source_path')
+    elif legacy.exists() or legacy.is_symlink():
+        raw = legacy.read_text(encoding='utf-8').strip()
+        if not raw:
+            raise ValueError('invalid legacy source registration')
+    else:
+        return None
+    try:
+        source = Path(raw).expanduser()
+    except RuntimeError as error:
+        raise ValueError('declared source path cannot expand user') from error
+    if not source.is_absolute():
+        source = BASE/source
+    if not source.is_dir():
+        raise ValueError('declared source directory is missing or unreadable')
+    return source
 
 
 def skill_name_to_command_name(skill: str) -> str:
-    """omc-critique -> critique"""
-    return skill.removeprefix("omc-")
+    return skill.removeprefix('omc-')
+
+
+def _check_file(num: int, label: str, path: Path) -> tuple[dict, bytes | None]:
+    try:
+        data = path.read_bytes()
+        if not data.strip():
+            raise ValueError('empty file')
+    except (OSError, ValueError) as error:
+        return dict(num=num, label=label, path=path, ok=False, reason=f'{_rel(path, ROOT)}: {error}'), None
+    return dict(num=num, label=label, path=path, ok=True, reason=''), data
 
 
 def check_skill(skill: str, verbose: bool = True) -> list[dict]:
-    """9개 항목 체크. 결과 리스트 반환."""
-    cmd = skill_name_to_command_name(skill)
-    omc_kit = get_omc_kit_path()
-
-    checks = [
-        {
-            "num": 1,
-            "label": "Cursor 스킬",
-            "path": ROOT / ".agent" / "skills" / skill / "SKILL.md",
-        },
-        {
-            "num": 2,
-            "label": "Codex 스킬",
-            "path": ROOT / ".agents" / "skills" / skill / "SKILL.md",
-        },
-        {
-            "num": 3,
-            "label": "Claude Code 커맨드",
-            "path": ROOT / ".claude" / "commands" / f"{cmd}.md",
-        },
-        {
-            "num": 4,
-            "label": "Gemini CLI (omc-commands.md 내 섹션)",
-            "path": ROOT / ".gemini" / "commands" / "omc-commands.md",
-            "contains_any": [f"## /{cmd}", f"### `/{cmd}", f"/`{cmd}"],
-        },
-        {
-            "num": 5,
-            "label": "Codex CLI (omc-commands.md 내 $omc-NAME)",
-            "path": ROOT / ".codex" / "commands" / "omc-commands.md",
-            "contains": f"$omc-{cmd}",
-        },
-        {
-            "num": 6,
-            "label": "AGENTS.md 커맨드 테이블",
-            "path": ROOT / "AGENTS.md",
-            "contains": f"`/{cmd}",
-        },
-        {
-            "num": 7,
-            "label": "omc-commands.mdc 슬래시 커맨드",
-            "path": ROOT / ".cursor" / "rules" / "omc-commands.mdc",
-            "contains": f"## /{cmd}",
-        },
-        {
-            "num": 8,
-            "label": "omc-roles.mdc 트리거 키워드",
-            "path": ROOT / ".cursor" / "rules" / "omc-roles.mdc",
-            "contains": cmd,
-        },
+    """Check actual Codex discovery surfaces, plus any explicitly declared SSOT."""
+    if not re.fullmatch(r'omc-[a-z0-9][a-z0-9-]*', skill):
+        return [dict(num=1, label='Codex skill name', path=None, ok=False, reason='invalid skill name')]
+    canonical = ROOT/'.agents/skills'/skill/'SKILL.md'
+    skill_result, skill_bytes = _check_file(1, 'Codex 스킬', canonical)
+    if skill_bytes is not None:
+        try:
+            import yaml
+            text = skill_bytes.decode('utf-8')
+            lines = text.splitlines()
+            if not lines or lines[0] != '---':
+                raise ValueError('missing YAML frontmatter')
+            end = lines.index('---', 1)
+            metadata = yaml.safe_load('\n'.join(lines[1:end]))
+            if (not isinstance(metadata, dict) or metadata.get('name') != skill
+                or not isinstance(metadata.get('description'), str)
+                or not metadata['description'].strip()):
+                raise ValueError('frontmatter requires matching name and nonempty description')
+        except ImportError:
+            skill_result.update(ok=False, reason='PyYAML is required for frontmatter validation')
+        except (ValueError, yaml.YAMLError) as error:
+            skill_result.update(ok=False, reason=f'invalid Codex frontmatter: {error}')
+    results = [skill_result,
+        _check_file(2, 'Codex CLI 공통 참조', ROOT/'.codex/commands/omc-commands.md')[0],
+        _check_file(3, 'Codex 공통 지침', ROOT/'AGENTS.md')[0],
     ]
-
-    # 9번: omc_kit SSOT — 1~3번 파일이 omc_kit에 존재하는지
-    if omc_kit:
-        checks.append({
-            "num": 9,
-            "label": f"omc_kit SSOT ({omc_kit.name})",
-            "path": omc_kit / "templates" / ".agent" / "skills" / skill / "SKILL.md",
-        })
-    else:
-        checks.append({
-            "num": 9,
-            "label": "omc_kit SSOT (.omc/hub.path 없음 — 건너뜀)",
-            "path": None,
-            "skip": True,
-        })
-
-    results = []
-    for c in checks:
-        if c.get("skip"):
-            results.append({**c, "ok": None, "reason": "hub.path 없음"})
-            continue
-
-        p: Path = c["path"]
-        if not p.exists():
-            results.append({**c, "ok": False, "reason": f"파일 없음: {_rel(p, ROOT)}"})
-            continue
-
-        # contains 체크
-        file_text = p.read_text(encoding="utf-8")
-        if "contains" in c:
-            if c["contains"] not in file_text:
-                results.append({**c, "ok": False, "reason": f"'{c['contains']}' 문자열 없음: {_rel(p, ROOT)}"})
-                continue
-        if "contains_any" in c:
-            if not any(pat in file_text for pat in c["contains_any"]):
-                results.append({**c, "ok": False, "reason": f"{c['contains_any']} 중 없음: {_rel(p, ROOT)}"})
-                continue
-
-        results.append({**c, "ok": True, "reason": ""})
-
+    # Static reference tables need not enumerate every discoverable skill.
+    try:
+        source = get_omc_kit_path()
+        if source is None:
+            results.append(dict(num=4, label='source SSOT (선택)', path=None,
+                                ok=None, skip=True, reason='canonical source 또는 외부 source 미등록'))
+        else:
+            path = source/'templates/.agents/skills'/skill/'SKILL.md'
+            result, source_bytes = _check_file(4, 'source SSOT', path)
+            if result['ok'] and results[0]['ok'] and source_bytes != skill_bytes:
+                result.update(ok=False, reason='deployed Codex skill differs from registered source')
+            results.append(result)
+    except (OSError, ValueError) as error:
+        results.append(dict(num=4, label='source SSOT', path=None, ok=False, reason=str(error)))
     return results
 
 
 def print_report(skill: str, results: list[dict], fix_hint: bool = False):
-    passed = sum(1 for r in results if r["ok"] is True)
-    skipped = sum(1 for r in results if r["ok"] is None)
-    failed = sum(1 for r in results if r["ok"] is False)
-
-    print(f"\n{'━'*50}")
-    print(f"SKILL CHECK: {skill}")
-    print(f"{'━'*50}")
-    for r in results:
-        if r["ok"] is True:
-            icon = "[x]"
-        elif r["ok"] is None:
-            icon = "[-]"
-        else:
-            icon = "[ ]"
-        print(f"  {icon} {r['num']}. {r['label']}")
-        if not r["ok"] and r.get("reason"):
-            print(f"       → {r['reason']}")
-
-    print(f"{'━'*50}")
-    print(f"결과: {passed}/9 통과  {failed}개 누락  {skipped}개 건너뜀")
-
-    if failed > 0:
-        print("\n누락 항목을 보완하려면:")
-        for r in results:
-            if not r["ok"]:
-                print(f"  {r['num']}. {r['label']} — {r['reason']}")
-        if fix_hint:
-            print("\n빠른 동기화 참고:")
-            print(f"  cat .agent/skills/SKILL_CHECKLIST.md")
-    print(f"{'━'*50}\n")
+    passed = sum(r['ok'] is True for r in results)
+    failed = sum(r['ok'] is False for r in results)
+    skipped = sum(r['ok'] is None for r in results)
+    print(f'\nSKILL CHECK: {skill}')
+    for result in results:
+        icon = '[x]' if result['ok'] is True else '[-]' if result['ok'] is None else '[ ]'
+        print(f"  {icon} {result['num']}. {result['label']}")
+        if result['reason']:
+            print(f"       → {result['reason']}")
+    print(f'결과: {passed}/{len(results)} 통과  {failed}개 누락  {skipped}개 건너뜀')
+    if failed and fix_hint:
+        print('등록 경로·선언된 source를 확인하세요. 자동 설치·초기화는 수행하지 않습니다.')
+        print('  참고: .agents/skills/SKILL_CHECKLIST.md')
 
 
 def list_all_skills() -> list[str]:
-    skills_dir = ROOT / ".agents" / "skills"
-    return sorted([
-        d.name for d in skills_dir.iterdir()
-        if d.is_dir() and d.name.startswith("omc-")
-    ])
+    def names(folder: Path) -> set[str]:
+        return {p.name for p in folder.iterdir() if p.is_dir() and p.name.startswith('omc-')} if folder.is_dir() else set()
+    skills = names(ROOT/'.agents/skills')
+    source = get_omc_kit_path()
+    if source is not None:
+        folder = source/'templates/.agents/skills'
+        if not folder.is_dir():
+            raise ValueError('declared source skill inventory is missing')
+        skills |= names(folder)
+    receipt = BASE/'.omc/install-receipt.json'
+    if ROOT != _TEMPLATES and (receipt.exists() or receipt.is_symlink()):
+        data = json.loads(receipt.read_text(encoding='utf-8'))
+        entries = data.get('entries') if isinstance(data, dict) else None
+        if not isinstance(entries, dict):
+            raise ValueError('invalid install receipt inventory')
+        for path in entries:
+            match = re.fullmatch(r'\.agents/skills/(omc-[a-z0-9][a-z0-9-]*)/SKILL\.md', path)
+            if match:
+                skills.add(match.group(1))
+    return sorted(skills)
 
 
-def main():
-    parser = argparse.ArgumentParser(description="OMC 스킬 등록 9개 항목 검증")
-    parser.add_argument("skill", nargs="?", help="스킬 이름 (예: omc-critique)")
-    parser.add_argument("--all", action="store_true", help="모든 스킬 검증")
-    parser.add_argument("--fix-hint", action="store_true", help="누락 시 수정 힌트 출력")
+def main() -> int:
+    parser = argparse.ArgumentParser(description='Codex 스킬 등록 검증 (읽기 전용)')
+    parser.add_argument('skill', nargs='?')
+    parser.add_argument('--all', action='store_true')
+    parser.add_argument('--fix-hint', action='store_true')
     args = parser.parse_args()
-
     if args.all:
-        skills = list_all_skills()
+        try:
+            skills = list_all_skills()
+        except (OSError, ValueError) as error:
+            print(f'스킬 목록 검증 실패: {error}')
+            return 1
         if not skills:
-            print("스킬 없음 (.agent/skills/ 에 omc-* 폴더 없음)")
-            sys.exit(0)
-        total_failed = 0
-        failed_skills = []
-        for skill in skills:
-            results = check_skill(skill, verbose=False)
-            print_report(skill, results, fix_hint=args.fix_hint)
-            f = sum(1 for r in results if r["ok"] is False)
-            if f > 0:
-                failed_skills.append(skill)
-            total_failed += f
-        print(f"{'━'*50}")
-        print(f"전체 요약: {len(skills)}개 스킬  통과 {len(skills)-len(failed_skills)}개  누락 {len(failed_skills)}개")
-        if failed_skills:
-            print(f"누락 스킬: {', '.join(failed_skills)}")
-        print(f"{'━'*50}\n")
-        sys.exit(1 if total_failed > 0 else 0)
-
+            print('스킬 없음 (.agents/skills/ 에 omc-* 폴더 없음)')
+            return 1
+    elif args.skill == 'pr-create':
+        print('pr-create는 공용 보조 Git 스킬이며 OMC 검사 대상이 아닙니다.')
+        return 1
     elif args.skill:
-        skill = args.skill
-        if not skill.startswith("omc-"):
-            skill = f"omc-{skill}"
-        results = check_skill(skill)
-        print_report(skill, results, fix_hint=args.fix_hint)
-        failed = sum(1 for r in results if r["ok"] is False)
-        sys.exit(1 if failed > 0 else 0)
-
+        skills = [args.skill if args.skill.startswith('omc-') else f'omc-{args.skill}']
     else:
         parser.print_help()
-        sys.exit(0)
+        return 0
+    failures = 0
+    for skill in skills:
+        results = check_skill(skill)
+        print_report(skill, results, args.fix_hint)
+        failures += sum(r['ok'] is False for r in results)
+    return 1 if failures else 0
 
 
-if __name__ == "__main__":
-    main()
+if __name__ == '__main__':
+    raise SystemExit(main())

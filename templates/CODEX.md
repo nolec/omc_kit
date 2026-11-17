@@ -34,12 +34,12 @@ o1/o3/o4 계열은 **내부 추론(chain-of-thought)이 자동으로 작동**합
 
 답을 모르면 추측하지 않고 **"이 부분은 확인이 필요합니다: [질문]"** 으로 명시합니다.
 
-## 세션 시작 시 자동 실행 (MANDATORY)
+## 자동 실행 비활성
 
-```bash
-OMC_EXECUTOR=codex python3 scripts/omc.py state init --target . && \
-OMC_EXECUTOR=codex python3 scripts/omc.py hook session_start --target .
-```
+세션 시작·도구 실행·Git 자동 훅은 비활성 상태로 유지합니다.
+원본에서 `state init`, `state status`, `session_start`를 자동 실행하지 않습니다.
+읽기 전용 요청은 파일·Git 조회로 확인합니다. 구현은 승인된 격리 작업 공간에서
+명시적 진입과 CONTRACT·RED·검증 절차를 따릅니다. 설치가 작업 승인을 대신하지 않습니다.
 
 ## Codex 진입점
 
@@ -54,3 +54,5 @@ $omc-review
 권장 순서: `$omc-plan` → `$omc-task` → `$omc-review` → `$omc-ship`
 
 세부 규칙 전체: **AGENTS.md** 참조
+
+설치 소스는 `.omc/install-source.json`에 기록된 경로로 식별합니다. 변경은 해당 소스와 templates SSOT에서 수행하며 원본 기록을 추정 생성하지 않습니다.

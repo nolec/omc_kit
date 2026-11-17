@@ -919,20 +919,6 @@ def test_network_unavailable_is_never_retried():
     ) is False
 
 
-def test_observed_reverse_task_has_bounded_contract():
-    payload = json.loads(
-        (Path(__file__).resolve().parents[1] / ".omc/tasks/observed-collect-reverse.json").read_text(
-            encoding="utf-8"
-        )
-    )
-    step = payload["steps"][0]
-
-    assert payload["max_retries"] == 0
-    assert payload["source_run_selector"] == "latest_completed_observed_run"
-    assert step["output_path"]
-    assert step["expected_observed_delta"] == 1
-    assert step["artifact_max_output_chars"] == 2000
-    assert step["retry_on_timeout"] is False
 
 
 def test_bounded_observed_contract_is_enforced_by_helpers():
@@ -1745,35 +1731,12 @@ class TestCmdRunRealExecution:
         assert saved["steps"]["s1"]["status"] == "completed"
 
 
-def test_v4b_operational_maintenance_task_opt_in_resume_failed_and_observed_metadata():
-    task_path = Path(".omc/tasks/v4b-operational-maintenance.json")
-    payload = json.loads(task_path.read_text(encoding="utf-8"))
-
-    assert payload["resume_failed"] is True
-    assert payload["completion_requires_real_runs"] is True
-    assert payload["benchmark_source_type"] == "observed_request"
-    assert payload["policy_pair"] == "baseline->candidate"
 
 
-def test_v4b_operational_maintenance_collect_step_is_expect_only():
-    task_path = Path(".omc/tasks/v4b-operational-maintenance.json")
-    payload = json.loads(task_path.read_text(encoding="utf-8"))
-
-    first_step = payload["steps"][0]
-
-    assert first_step["id"] == "collect_fresh_observed_runs"
-    assert first_step["expect_only"] is True
 
 
-def test_v4b_operational_maintenance_verify_step_is_expect_only():
-    task_path = Path(".omc/tasks/v4b-operational-maintenance.json")
-    payload = json.loads(task_path.read_text(encoding="utf-8"))
-
-    second_step = payload["steps"][1]
-
-    assert second_step["id"] == "verify_ready_surfaces_hold"
-    assert second_step["expect_only"] is True
-
+def _uncollected_legacy_recovery_cases():
+    """Preserve pre-existing nested, uncollected cases; historical task assertion retired."""
     def test_real_run_persists_running_state_before_step_execution(self, tmp_path):
         tasks_dir = tmp_path / ".omc" / "tasks"
         tasks_dir.mkdir(parents=True, exist_ok=True)
@@ -2370,7 +2333,9 @@ class TestExpectChecks:
         assert results[0]["ok"] is False
         assert "허용되지 않은 커맨드" in results[0]["output"]
 
-    def test_policy_parse_failure_warns_and_fallbacks(self, tmp_path, capsys):
+    def test_policy_parse_failure_warns_and_fallbacks(self, tmp_path, capsys, monkeypatch):
+        # Per-test isolation; deduplication across the two calls remains real.
+        monkeypatch.setattr(omc_autopilot, "_POLICY_WARNED_KEYS", set())
         subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True, text=True)
         omc_dir = tmp_path / ".omc"
         omc_dir.mkdir(parents=True, exist_ok=True)
@@ -2384,7 +2349,9 @@ class TestExpectChecks:
         assert "policy parse failed" in captured.out
         assert results[0]["ok"] is True
 
-    def test_policy_parse_failure_warns_only_once_for_same_error(self, tmp_path, capsys):
+    def test_policy_parse_failure_warns_only_once_for_same_error(self, tmp_path, capsys, monkeypatch):
+        # Per-test isolation; deduplication across the two calls remains real.
+        monkeypatch.setattr(omc_autopilot, "_POLICY_WARNED_KEYS", set())
         subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True, text=True)
         omc_dir = tmp_path / ".omc"
         omc_dir.mkdir(parents=True, exist_ok=True)
