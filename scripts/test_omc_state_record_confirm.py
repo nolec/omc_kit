@@ -1649,11 +1649,16 @@ def test_notepad_marks_active_session_as_cleanup_needed_when_reason_exists(tmp_p
     session["lifecycle"]["reason"] = "Implementation stopped after reproduction failed."
     session_path.write_text(json.dumps(session, ensure_ascii=False, indent=2), encoding="utf-8")
 
+    notepad_path = target / ".omc" / "notepad.md"
+    original_notepad = notepad_path.read_bytes()
     status = _run("state", "status", "--target", str(target))
     assert status.returncode == 0, status.stderr
     assert "latest_session_note: 정리 필요" in status.stdout, status.stdout
+    assert notepad_path.read_bytes() == original_notepad
 
-    notepad = (target / ".omc" / "notepad.md").read_text(encoding="utf-8")
+    refresh = _run("state", "init", "--target", str(target), "--force")
+    assert refresh.returncode == 0, refresh.stderr
+    notepad = notepad_path.read_text(encoding="utf-8")
     assert "current_session_note" in notepad, notepad
     assert "정리 필요" in notepad, notepad
 
@@ -1939,9 +1944,9 @@ def test_status_separates_staged_scope_from_out_of_scope_dirty_changes(tmp_path:
 
     status = _run("state", "status", "--target", str(target))
     assert status.returncode == 0, status.stderr
-    assert "현재 커밋 범위" in status.stdout, status.stdout
+    assert "Git staged" in status.stdout, status.stdout
     assert "a.py" in status.stdout, status.stdout
-    assert "범위 밖 dirty 변경" in status.stdout, status.stdout
+    assert "Git unstaged" in status.stdout, status.stdout
     assert "b.py" in status.stdout, status.stdout
 
 
@@ -2158,11 +2163,10 @@ def test_status_calls_out_ship_blocker_when_commit_scope_is_empty(tmp_path: Path
 
     status = _run("state", "status", "--target", str(target))
     assert status.returncode == 0, status.stderr
-    assert "현재 커밋 범위: 없음" in status.stdout, status.stdout
-    assert "ship 차단 힌트" in status.stdout, status.stdout
-    assert "현재 커밋 범위가 없어 ship 불가" in status.stdout, status.stdout
-    assert "다음 조치 힌트" in status.stdout, status.stdout
-    assert "먼저 현재 커밋 범위를 만들어야 함" in status.stdout, status.stdout
+    assert "Git staged: 없음" in status.stdout, status.stdout
+    assert "Git unstaged:" in status.stdout and "only_unstaged.py" in status.stdout
+    assert "요청 범위: 미확인" in status.stdout
+    assert "ship 차단 힌트" not in status.stdout
 
 
 def test_failed_run_summary_uses_shared_status_followup_input():

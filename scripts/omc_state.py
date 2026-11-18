@@ -1830,33 +1830,37 @@ def _persist_v2_capture_status_best_effort(
         return session
 
 
-def _git_scope_snapshot(project_root: Path) -> dict[str, list[str]]:
-    proc = subprocess.run(
-        ["git", "-C", str(project_root), "status", "--porcelain"],
-        check=False,
-        capture_output=True,
-        text=True,
-        env={**os.environ, 'GIT_OPTIONAL_LOCKS': '0'},
-    )
+def _git_scope_snapshot(project_root: Path) -> dict[str, list[str]] | None:
+    try:
+        proc = subprocess.run(
+            ["git", "-c", "core.fsmonitor=false", "-C", str(project_root), "status", "--porcelain=v1", "-z"],
+            check=False,
+            capture_output=True,
+            timeout=5,
+            env={**os.environ, 'GIT_OPTIONAL_LOCKS': '0'},
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
     if proc.returncode != 0:
-        return {"staged": [], "unstaged": [], "omc_artifacts": [], "untracked": []}
+        return None
 
     staged: list[str] = []
     unstaged: list[str] = []
     omc_artifacts: list[str] = []
     untracked: list[str] = []
 
-    for raw_line in proc.stdout.splitlines():
+    records = iter(proc.stdout.split(b'\0'))
+    for raw_line in records:
         if not raw_line:
             continue
-        status_code = raw_line[:2]
-        path_part = raw_line[3:] if len(raw_line) > 3 else ""
-        path = path_part.split(" -> ")[-1].strip()
+        status_code = raw_line[:2].decode('ascii', errors='replace')
+        path = os.fsdecode(raw_line[3:])
+        if 'R' in status_code or 'C' in status_code:
+            next(records, None)  # porcelain -z emits the source path next
         if not path:
             continue
         if path.startswith(".omc/"):
             omc_artifacts.append(path)
-            continue
         if status_code == "??":
             untracked.append(path)
             continue
@@ -3781,70 +3785,264 @@ def compact_state(project_root: Path, *, keep_entries: int = 25) -> dict[str, ob
 
 
 def status(project_root: Path) -> str:
-    from omc_edit_resume import frozen
-    lifecycle_frozen = frozen(project_root)
-    if not lifecycle_frozen:
-        _ensure_tree(project_root)
-        # Frozen status must not renew, repair, or rewrite historical records.
-        _rewrite_notepad(project_root)
-    memory = _read_json(
-        _memory_path(project_root),
-        {"version": 1, "created_at": _iso_now(), "updated_at": _iso_now(), "entries": []},
-    )
+    try:
+        return _status_read_only(project_root)
+    except (OSError, ValueError, UnicodeError, TypeError, AttributeError, KeyError) as exc:
+        from omc_edit_resume import RETIREMENT_PENDING
+        try:
+            marker_present = _status_path_present(project_root / RETIREMENT_PENDING, project_root)
+        except (OSError, ValueError):
+            marker_present = False
+        lifecycle = 'FROZEN' if marker_present else '확인 불가'
+        return f"OMC state: {project_root}\n- lifecycle: {lifecycle}\n- 상태 확인 불가: 읽기 오류 또는 손상 ({type(exc).__name__})"
+
+
+def _status_path_present(path: Path, root: Path) -> bool:
+    relative = path.relative_to(root)
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    opened = []
+    try:
+        directory = os.open(root, flags)
+        opened.append(directory)
+        for part in relative.parts[:-1]:
+            try:
+                directory = os.open(part, flags, dir_fd=directory)
+            except FileNotFoundError:
+                return False
+            opened.append(directory)
+        try:
+            os.stat(relative.parts[-1], dir_fd=directory, follow_symlinks=False)
+            return True
+        except FileNotFoundError:
+            return False
+    finally:
+        for fd in reversed(opened):
+            os.close(fd)
+
+
+def _status_read_json(path: Path, root: Path, *, jsonl: bool = False) -> dict | list[str] | None:
+    """Bounded, nonblocking regular-file read; reject symlinked state paths."""
+    relative = path.relative_to(root)
+    nofollow = getattr(os, 'O_NOFOLLOW', 0)
+    if not nofollow or not hasattr(os, 'O_DIRECTORY'):
+        raise ValueError('safe_state_read_unsupported')
+    directories = []
+    try:
+        directory = os.open(root, os.O_RDONLY | os.O_DIRECTORY | nofollow)
+        directories.append(directory)
+        for part in relative.parts[:-1]:
+            try:
+                directory = os.open(part, os.O_RDONLY | os.O_DIRECTORY | nofollow, dir_fd=directory)
+            except FileNotFoundError:
+                return None
+            directories.append(directory)
+        try:
+            fd = os.open(relative.parts[-1], os.O_RDONLY | nofollow | getattr(os, 'O_NONBLOCK', 0), dir_fd=directory)
+        except FileNotFoundError:
+            return None
+        try:
+            return _status_json_from_fd(fd, jsonl=jsonl)
+        finally:
+            os.close(fd)
+    finally:
+        for descriptor in reversed(directories):
+            os.close(descriptor)
+
+
+def _status_json_from_fd(fd: int, *, jsonl: bool = False) -> dict | list[str]:
+    info = os.fstat(fd)
+    limit = 8 * 1024 * 1024
+    if not stat.S_ISREG(info.st_mode) or info.st_size > limit:
+        raise ValueError('state_not_bounded_regular_file')
+    with os.fdopen(fd, 'rb', closefd=False) as source:
+        raw = source.read(limit + 1)
+    if len(raw) > limit:
+        raise ValueError('state_too_large')
+    if jsonl:
+        return raw.decode('utf-8').splitlines()
+    data = json.loads(raw)
+    if not isinstance(data, dict):
+        raise ValueError('state_object_required')
+    return data
+
+
+def _status_pipeline_run_count(root: Path) -> int:
+    """Count only contained, regular run results without following links."""
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    descriptors = []
+    try:
+        directory = os.open(root, flags)
+        descriptors.append(directory)
+        for part in ('.omc', 'runs'):
+            try:
+                directory = os.open(part, flags, dir_fd=directory)
+            except FileNotFoundError:
+                return 0
+            descriptors.append(directory)
+        count = 0
+        for name in os.listdir(directory):
+            try:
+                child = os.open(name, flags, dir_fd=directory)
+            except NotADirectoryError:
+                info = os.stat(name, dir_fd=directory, follow_symlinks=False)
+                if stat.S_ISLNK(info.st_mode):
+                    raise ValueError('run_directory_symlink')
+                continue
+            try:
+                try:
+                    info = os.stat('result.json', dir_fd=child, follow_symlinks=False)
+                except FileNotFoundError:
+                    continue
+                if not stat.S_ISREG(info.st_mode):
+                    raise ValueError('run_result_not_regular')
+                count += 1
+            finally:
+                os.close(child)
+        return count
+    finally:
+        for descriptor in reversed(descriptors):
+            os.close(descriptor)
+
+
+def _status_read_only(project_root: Path) -> str:
+    from omc_edit_resume import RETIREMENT_PENDING, slot_path
+    marker = project_root / RETIREMENT_PENDING
+    marker_present = _status_path_present(marker, project_root)
+    known_frozen = marker_present
+    governance = []
+    for source in (project_root / '.omc/pipeline_session.json', project_root / '.omc/state/pending-completion.json'):
+        try:
+            governance.append(_status_read_json(source, project_root))
+        except (OSError, ValueError, UnicodeError):
+            frozen_text = '\n- lifecycle: FROZEN (읽기 전용; 만료 작업 기록 보존)' if known_frozen else ''
+            return f"OMC state: {project_root}{frozen_text}\n- 상태 확인 불가: 손상 또는 읽기 실패 ({source})"
+    state, pending = governance
+    work_id = (state or {}).get('owner_work_id') or (pending or {}).get('work_id')
+    lifecycle_unknown = False
+    if work_id is not None:
+        if not isinstance(work_id, str) or not work_id:
+            lifecycle_unknown = True
+        else:
+            slot = slot_path(project_root, work_id)
+            known_frozen = known_frozen or _status_path_present(slot, project_root)
+            if state:
+                try:
+                    expired = time.time() - state.get('started_at', 0) > 28800
+                except (TypeError, ValueError):
+                    lifecycle_unknown = True
+                else:
+                    if expired and pending is not None:
+                        known_frozen = True
+                    elif expired and not known_frozen:
+                        lifecycle_unknown = True
+    lifecycle_frozen = known_frozen
+    frozen_note = '\n- lifecycle: FROZEN (읽기 전용; 만료 작업 기록 보존)' if lifecycle_frozen else ''
+    # Status is observation only: never initialise or regenerate user files.
+    core = (_memory_path(project_root), _latest_path(project_root), _policy_path(project_root))
+    for path in (project_root / '.omc', project_root / '.omc' / 'state', *core):
+        if path.is_symlink():
+            return f"OMC state: {project_root}{frozen_note}\n- 상태 확인 불가: 심볼릭 링크 ({path})"
+    missing = []
+    values = {}
+    for path in core:
+        try:
+            data = _status_read_json(path, project_root)
+            if data is None:
+                missing.append(path.name)
+                continue
+            if path == _memory_path(project_root) and not isinstance(data.get('entries'), list):
+                raise ValueError('entries required')
+            values[path] = data
+        except (OSError, ValueError, UnicodeError):
+            return f"OMC state: {project_root}{frozen_note}\n- 상태 확인 불가: 손상 또는 읽기 실패 ({path})"
+    memory = values.get(_memory_path(project_root), {'entries': []})
     entries = list(memory.get("entries", []))
-    sessions = _session_entries(project_root)
+    sessions = [entry for entry in entries if entry.get('kind') == 'session']
     runs = [entry for entry in entries if entry.get("kind") == "run"]
     notes = [entry for entry in entries if entry.get("kind") == "note"]
     latest_pending = _latest_pending_session(sessions)
-    latest_meta = _read_json(_latest_path(project_root), {"latest_session_id": None, "latest_confirmed_session_id": None})
-    active_run = _load_run_entry(project_root, str(latest_meta.get("active_run_id")))
+    latest_meta = values.get(_latest_path(project_root), {})
+    missing_references = []
+    def referenced(key: str, kind: str) -> dict | None:
+        identity = latest_meta.get(key)
+        if identity is None:
+            return None
+        if not isinstance(identity, str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,200}', identity):
+            raise ValueError('state_id_invalid')
+        path = _session_path(project_root, identity) if kind == 'session' else _run_path(project_root, identity)
+        result = _status_read_json(path, project_root)
+        if result is None:
+            missing_references.append(key)
+        return result
+    active_run = referenced('active_run_id', 'run')
     if active_run is not None and str(active_run.get("status")) != "running":
         active_run = None
-    latest_run = _load_run_entry(project_root, str(latest_meta.get("latest_run_id")))
+    latest_run = referenced('latest_run_id', 'run')
     recent_finished_runs = [
         entry for entry in reversed(runs) if str(entry.get("status")) in {"completed", "failed", "aborted"}
     ]
-    latest = _load_session_entry(project_root, str(latest_meta.get("latest_session_id")))
-    if latest is None:
+    latest = referenced('latest_session_id', 'session')
+    if latest is None and not latest_meta.get('latest_session_id') and _latest_path(project_root).name not in missing:
         latest = entries[-1] if entries else None
     git_scope = _git_scope_snapshot(project_root)
-    pipeline_history_run_count = _pipeline_history_run_count(project_root)
-    display_run_count = _display_run_count(project_root, runs)
+    pipeline_history_run_count = _status_pipeline_run_count(project_root)
+    display_run_count = len(runs) + pipeline_history_run_count
     lines = [f"OMC state: {project_root}"]
+    if missing:
+        lines.append('- 상태 일부 없음: ' + ', '.join(missing) + ' (관련 상태 확인 불가)')
     if lifecycle_frozen:
         lines.append('- lifecycle: FROZEN (읽기 전용; 만료 작업 기록 보존)')
         lines.append('- recovery: 명시적 retire-expired-work 후 별도 새 작업 등록; 이전 작업 완료·승인 아님')
-    lines.append(f"- memory entries: {len(entries)}")
-    lines.append(f"- sessions: {len(sessions)}")
-    lines.append(f"- runs: {display_run_count}")
+    elif lifecycle_unknown:
+        lines.append('- lifecycle: 확인 불가 (완료 영수증과 Git 확인 필요; 해제 아님)')
+    memory_available = _memory_path(project_root).name not in missing
+    latest_available = _latest_path(project_root).name not in missing
+    lines.append(f"- memory entries: {len(entries) if memory_available else '확인 불가'}")
+    lines.append(f"- sessions: {len(sessions) if memory_available else '확인 불가'}")
+    lines.append(f"- runs: {display_run_count if memory_available else '확인 불가'}")
     if pipeline_history_run_count:
         lines.append(f"- pipeline_history_runs(.omc/runs): {pipeline_history_run_count}")
-    lines.append(f"- notes: {len(notes)}")
-    if latest:
+    lines.append(f"- notes: {len(notes) if memory_available else '확인 불가'}")
+    if 'latest_session_id' in missing_references:
+        lines.append('- latest: 확인 불가 (참조된 세션 파일 없음)')
+    elif latest:
         lines.append(f"- latest: {_entry_summary(latest)}")
         latest_lifecycle = dict(latest.get("lifecycle", {}))
         if latest_lifecycle.get("reason"):
             lines.append(f"- latest_session_reason: {_excerpt(str(latest_lifecycle.get('reason', '')), 140)}")
             if latest_lifecycle.get("status") == "active":
                 lines.append("- latest_session_note: 정리 필요")
-    policy = _read_json(_policy_path(project_root), {"enforce_confirm": True})
-    lines.append(f"- latest_session_id: {latest_meta.get('latest_session_id')}")
-    lines.append(f"- latest_confirmed_session_id: {latest_meta.get('latest_confirmed_session_id')}")
-    lines.append(f"- latest_pending_session_id: {latest_pending.get('session_id') if latest_pending else None}")
-    lines.append(f"- latest_pending_request: {_excerpt(str(latest_pending.get('request', '')), 120) if latest_pending else 'None'}")
-    lines.append(f"- active_run_id: {latest_meta.get('active_run_id')}")
-    lines.append(f"- latest_run_id: {latest_meta.get('latest_run_id')}")
+    policy = values.get(_policy_path(project_root), {})
+    lines.append(f"- latest_session_id: {latest_meta.get('latest_session_id') if latest_available else '확인 불가'}")
+    lines.append(f"- latest_confirmed_session_id: {latest_meta.get('latest_confirmed_session_id') if latest_available else '확인 불가'}")
+    lines.append(f"- latest_pending_session_id: {latest_pending.get('session_id') if latest_pending else ('None' if memory_available else '확인 불가')}")
+    lines.append(f"- latest_pending_request: {_excerpt(str(latest_pending.get('request', '')), 120) if latest_pending else ('None' if memory_available else '확인 불가')}")
+    lines.append(f"- active_run_id: {latest_meta.get('active_run_id') if latest_available else '확인 불가'}")
+    lines.append(f"- latest_run_id: {latest_meta.get('latest_run_id') if latest_available else '확인 불가'}")
     if active_run:
         lines.append(f"- active_run: `{active_run.get('command_name', '')}` ({active_run.get('status', '')})")
     elif latest_run:
         lines.append(f"- latest_run: `{latest_run.get('command_name', '')}` ({latest_run.get('status', '')})")
+    if 'active_run_id' in missing_references or 'latest_run_id' in missing_references:
+        lines.append('- 참조 실행: 확인 불가 (실행 파일 없음)')
     if recent_finished_runs:
         lines.append(f"- recent_runs: {_format_recent_runs_bucket(recent_finished_runs)}")
-    lines.append(f"- enforce_confirm: {policy.get('enforce_confirm', True)}")
+    lines.append(f"- enforce_confirm: {policy.get('enforce_confirm', '확인 불가')}")
     try:
         import omc_skill_effectiveness_cohort as cohort
 
-        cohort_status = cohort.local_status(project_root)
+        config = _status_read_json(cohort.config_path(project_root), project_root)
+        if config is None:
+            cohort_status = {'state': 'DISABLED'}
+        else:
+            config = cohort._validate_config_data(config)
+            ledger = _status_read_json(cohort.ledger_path(project_root), project_root, jsonl=True)
+            events = cohort._validate_event_lines(config, ledger or [])
+            cohort_status = {
+                'state': 'ENABLED',
+                'enrollment_source': config.get('enrollment_source', 'manual'),
+                'eligible_candidates': sum(event['event_type'] == 'candidate' for event in events),
+            }
         if cohort_status["state"] == "ENABLED":
             lines.append(
                 "- skill_cohort: ENABLED "
@@ -3872,13 +4070,14 @@ def status(project_root: Path) -> str:
         f"- readiness_command: python3 {readiness_script} version --target "
         f"{readiness_target}"
     )
-    lines.append(f"- 현재 커밋 범위: {_format_scope_bucket(git_scope['staged'])}")
-    lines.append(f"- 범위 밖 dirty 변경: {_format_scope_bucket(git_scope['unstaged'])}")
-    lines.append(f"- .omc 실행 아티팩트: {_format_scope_bucket(git_scope['omc_artifacts'])}")
-    lines.append(f"- untracked: {_format_scope_bucket(git_scope['untracked'])}")
-    if not git_scope["staged"] and git_scope["unstaged"]:
-        lines.append("- ship 차단 힌트: 현재 커밋 범위가 없어 ship 불가 — 범위 밖 dirty 변경만 존재")
-        lines.append("- 다음 조치 힌트: ship 전에 먼저 현재 커밋 범위를 만들어야 함")
+    if git_scope is None:
+        lines.append('- Git 상태: 확인 불가')
+    else:
+        lines.append(f"- Git staged: {_format_scope_bucket(git_scope['staged'])}")
+        lines.append(f"- Git unstaged: {_format_scope_bucket(git_scope['unstaged'])}")
+        lines.append(f"- .omc 실행 아티팩트: {_format_scope_bucket(git_scope['omc_artifacts'])}")
+        lines.append(f"- Git untracked: {_format_scope_bucket(git_scope['untracked'])}")
+    lines.append('- 요청 범위: 미확인 (Git 상태만으로 승인 범위를 판단하지 않음)')
     lines.append(f"- summary: {_summary_path(project_root)}")
     lines.append(f"- notepad: {_notepad_path(project_root)}")
     lines.append(f"- project-memory: {_memory_path(project_root)}")

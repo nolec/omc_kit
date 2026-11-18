@@ -26,10 +26,10 @@ REQUIRED_SEQUENCE = [
     "조회 전용",
     "python3 scripts/omc.py state status --target .",
     "cat .omc/notepad.md",
-    "git status -sb",
-    "git diff --stat HEAD",
-    "git ls-files --others --exclude-standard",
-    "git log --oneline -5",
+    "git -c core.fsmonitor=false status -sb",
+    "git -c core.fsmonitor=false diff --stat HEAD",
+    "git -c core.fsmonitor=false ls-files --others --exclude-standard",
+    "git -c core.fsmonitor=false log --oneline -5",
     "세션 불일치",
     "stale",
     "소스/스킬 변경",
@@ -54,9 +54,9 @@ REQUIRED_BEHAVIOR_MARKERS = [
     "pending_request",
     "N/A",
     "이유",
-    "현재 커밋 범위",
-    "범위 밖 dirty 변경",
-    "ship 차단 힌트",
+    "요청 범위",
+    "staged",
+    "확인 불가",
     "커밋 대상 아님",
     "이벤트가 있을 때만",
     "reroute 이유",
@@ -102,11 +102,11 @@ MUTATING_COMMAND_PATTERNS = [
 VALID_STATUS_SAMPLE = """
 OMC 세션: latest request와 현재 사용자 요청 불일치 — stale 세션 불일치
 Git 상태: main...origin/main [ahead 8]
-변경 분류: 소스/스킬 변경 중 현재 커밋 범위 3개, 범위 밖 dirty 변경 2개, .omc 실행 아티팩트만 있음, untracked 있음
-차단/주의: 범위 밖 dirty 변경은 이번 커밋 대상 아님
-ship 차단 힌트: 현재 커밋 범위가 없어 ship 불가 — 범위 밖 dirty 변경만 존재
+변경 분류: Git staged 3개, unstaged 2개, 요청 범위 미확인, .omc 실행 아티팩트만 있음, untracked 있음
+차단/주의: 기존 변경의 소유 범위 확인 필요
+요청 범위: 미확인
 reroute 이유: stale 세션이라 지금 task/review로 가면 요청 문맥이 엇갈린다
-delay 이유: 범위 밖 dirty 변경이 있어 지금 ship 판단을 내리면 잘못된 결론이 난다
+delay 이유: 요청 범위가 확인되지 않아 ship 판단을 보류한다
 재개 조건: 현재 요청 재정렬 후 커밋 범위를 다시 확정한다
 다음 액션: $omc-plan으로 현재 요청 재정렬
 """
@@ -114,9 +114,9 @@ delay 이유: 범위 밖 dirty 변경이 있어 지금 ship 판단을 내리면 
 VALID_STATUS_SAMPLE_WITHOUT_REROUTE = """
 OMC 세션: latest request와 현재 사용자 요청 일치
 Git 상태: main...origin/main [ahead 8]
-변경 분류: 소스/스킬 변경 중 현재 커밋 범위 3개, 범위 밖 dirty 변경 없음, .omc 실행 아티팩트만 있음, untracked 없음
-차단/주의: 커밋 대상 아님 없음
-다음 액션: $omc-review로 현재 변경 검토
+변경 분류: Git staged 3개, unstaged 없음, 요청 범위 미확인, .omc 실행 아티팩트만 있음, untracked 없음
+차단/주의: 요청 범위 미확인으로 기존 변경 보존
+다음 액션: 사용자 선택 대기
 """
 
 INVALID_STATUS_SAMPLE = """
@@ -151,9 +151,9 @@ def _validate_status_output(sample: str) -> list[str]:
     required_patterns = {
         "session": r"OMC 세션:\s*\S",
         "git": r"Git 상태:\s*\S",
-        "classification": r"변경 분류:.*소스/스킬 변경.*\.omc 실행 아티팩트.*untracked",
-        "warning": r"차단/주의:.*커밋 대상 아님",
-        "next_action": r"다음 액션:.*\$omc-(plan|task|review|ship|retro)",
+        "classification": r"변경 분류:.*staged.*unstaged.*요청 범위.*\.omc 실행 아티팩트.*untracked",
+        "warning": r"차단/주의:\s*\S",
+        "next_action": r"다음 액션:.*(?:\$omc-(?:plan|task|review|ship|retro)|사용자 선택 대기)",
     }
     failures = [
         name
@@ -258,7 +258,7 @@ def test_status_skill_prioritizes_current_bottleneck_over_default_pipeline():
         "현재 병목 > 기본 파이프라인",
         "요청 stale 또는 문맥 엇갈림 → `$omc-plan`",
         "사용자가 상태만 확인 중이거나 다음 단계를 아직 고르지 않음 → 사용자 선택 대기",
-        "현재 커밋 범위 변경이 있고 품질 확인이 병목이면 → `$omc-review`",
+        "요청 범위가 확인되고 품질 확인이 병목이면 → `$omc-review`",
         "리뷰 통과 + 배포 의도 명시 + ship 차단 없음 → `$omc-ship`",
     ]:
         assert marker in text

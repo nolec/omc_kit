@@ -53,6 +53,8 @@ python3 scripts/omc_autopilot.py new --id feat-x --title "기능 X"
 python3 scripts/omc.py autopilot --task-file .omc/tasks/feat-x.json --dry-run
 ```
 
+`state status`는 파일을 초기화하거나 갱신하지 않습니다. Git staged·unstaged·untracked는 현재 Git 상태이며 사용자 요청이나 커밋 승인 범위를 뜻하지 않습니다. 상태 파일이나 Git 확인이 불가능하면 해당 결과를 확인 불가로 표시합니다. 오래된 작업에 pending이 없고 완료 영수증과 Git의 추가 판정이 필요한 경우 lifecycle을 확인 불가로 표시하며 해제·승인을 뜻하지 않습니다. 실제 쓰기 가드 판정은 그대로입니다. 초기화는 별도의 `state init` 명령으로 수행합니다.
+
 ## 명시적 검증 & CI
 
 커밋 전 staged 변경의 TDD 게이트를 확인합니다.

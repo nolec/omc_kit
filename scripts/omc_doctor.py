@@ -68,7 +68,7 @@ class Check:
 
 
 def _run_status(project_root: Path) -> tuple[bool, str]:
-    """Observe existing state only; status CLI initializes absent state."""
+    """Observe existing state only; status CLI also leaves absent state untouched."""
     path = project_root / ".omc/state/latest.json"
     try:
         data = json.loads(path.read_text(encoding="utf-8"))

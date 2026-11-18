@@ -243,7 +243,10 @@ def create_v2_roster(
 
 def _validate_config(project_root: Path) -> dict[str, Any]:
     _omc_dir(project_root, create=False)
-    config = _read_json(config_path(project_root))
+    return _validate_config_data(_read_json(config_path(project_root)))
+
+
+def _validate_config_data(config: dict[str, Any]) -> dict[str, Any]:
     expected = {"schema_version", "enabled", "enrollment_id", "enrolled_at", "enrollment_session_ids"}
     setup_expected = expected | {"enrollment_source"}
     try:
@@ -583,6 +586,10 @@ def _load_events(project_root: Path) -> tuple[dict[str, Any], list[dict[str, Any
         lines = path.read_text(encoding="utf-8").splitlines()
     except (OSError, UnicodeDecodeError) as error:
         raise SkillCohortError("ledger_unreadable") from error
+    return config, _validate_event_lines(config, lines)
+
+
+def _validate_event_lines(config: dict[str, Any], lines: list[str]) -> list[dict[str, Any]]:
     previous_hash: str | None = None
     events: list[dict[str, Any]] = []
     seen: dict[str, set[object]] = {"candidate": set(), "review": set(), "followup": set()}
@@ -607,7 +614,7 @@ def _load_events(project_root: Path) -> tuple[dict[str, Any], list[dict[str, Any
         seen[checked["event_type"]].add(event_key)
         previous_hash = checked["event_sha256"]
         events.append(checked)
-    return config, events
+    return events
 
 
 def _append(path: Path, event: dict[str, Any]) -> None:
