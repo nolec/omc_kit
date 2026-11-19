@@ -135,6 +135,7 @@ _COMMAND_SURFACES = {
             "skill-cohort",
             "installation-registry",
             "peer-review",
+            "scope-check",
             "state",
             "prompt",
         }
@@ -506,6 +507,10 @@ def main() -> int:
     peer_review = sub.add_parser("peer-review", help="Run peer-review of the latest uncommitted changes.")
     peer_review.add_argument("--target", type=Path, default=Path.cwd(), help="Target repository root.")
     peer_review.add_argument("--async-mode", action="store_true", help="Run in background.")
+
+    scope_check = sub.add_parser("scope-check", help="Compare explicit paths with staged Git paths, read-only.")
+    scope_check.add_argument("--target", type=Path, default=Path.cwd())
+    scope_check.add_argument("--expected-path", action="append", default=[])
 
     state = sub.add_parser("state", help="Manage persistent .omc state.")
     state_sub = state.add_subparsers(dest="state_command", required=True)
@@ -1080,6 +1085,12 @@ def main() -> int:
                     str(value.resolve()),
                 ])
         return _run_script(freeze_script, forwarded)
+
+    if args.command == "scope-check":
+        forwarded = ["--target", str(args.target.resolve())]
+        for path in args.expected_path:
+            forwarded.append("--expected-path=" + path)
+        return _run_script(kit / "scripts" / "omc_scope_check.py", forwarded)
 
     if args.command == "state":
         state_script = kit / "scripts" / "omc_state.py"
