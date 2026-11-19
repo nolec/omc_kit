@@ -85,3 +85,36 @@ class TestLessonConsoleOutput:
         assert re.search(r"교훈\s+\d+개", out), (
             "교훈 개수 (예: '교훈 1개')가 출력에 포함돼야 함"
         )
+
+
+@pytest.mark.parametrize("query, expected", [
+    ("invoices", "2026-01-01-invoices.md"),
+    ("unmatched", "2026-01-02-layout.md"),
+])
+def test_recommendations_identify_exact_lesson_in_all_outputs(tmp_path, monkeypatch, capsys, query, expected):
+    import omc_context
+
+    folder = tmp_path / ".omc" / "lessons"
+    folder.mkdir(parents=True)
+    for name, rule in [
+        ("2026-01-01-invoices.md", "invoices rule"),
+        ("2026-01-02-layout.md", "layout rule"),
+        ("2026-01-03-retired.md", "invoices retired rule"),
+    ]:
+        (folder / name).write_text(f"# Same title\n## 적용된 규칙\n{rule}\n", encoding="utf-8")
+    (folder / "2026-01-03-retired.md.retracted.json").write_text("{}")
+    git_info = {"branch": query}
+    monkeypatch.setattr(omc_context, "_collect_git_info", lambda root: git_info)
+    summary = omc_context._collect_lessons(tmp_path, git_info, n=1)
+    omc_context._print_lessons_to_console(tmp_path, git_info, n=1)
+    console = capsys.readouterr().out
+    omc_context.write_lessons_inject(tmp_path, top_n=1)
+    cursor = (tmp_path / ".cursor/rules/omc-lessons-inject.mdc").read_text()
+    for output in (summary, console, cursor):
+        assert f"파일: {expected}" in output
+        assert "retired.md" not in output
+    shown = subprocess.check_output([
+        sys.executable, "-B", str(ROOT / "scripts/omc_lesson.py"),
+        "--target", str(tmp_path), "show", expected
+    ], text=True)
+    assert ("invoices rule" if query == "invoices" else "layout rule") in shown

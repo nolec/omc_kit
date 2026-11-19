@@ -459,6 +459,13 @@ def search_relevant(root: Path, context_text: str, top_n: int = 3) -> list[tuple
     Returns:
         [(title, rule), ...] 형태의 리스트
     """
+    return [(title, rule) for title, rule, _ in search_relevant_with_source(root, context_text, top_n)]
+
+
+def search_relevant_with_source(
+    root: Path, context_text: str, top_n: int = 3,
+) -> list[tuple[str, str, str]]:
+    """Return the same ranked lessons, including their exact filenames."""
     lessons_dir = root / _LESSONS_DIR
     if not lessons_dir.exists():
         return []
@@ -481,7 +488,7 @@ def search_relevant(root: Path, context_text: str, top_n: int = 3) -> list[tuple
             if rule_idx is not None and rule_idx + 1 < len(lines)
             else "(없음)"
         )
-        results.append((title, rule))
+        results.append((title, rule, path.name))
     return results
 
 

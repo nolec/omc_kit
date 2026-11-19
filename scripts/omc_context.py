@@ -122,12 +122,13 @@ def _collect_lessons(root, git_info: dict | None = None, n: int = 5) -> str:
             ]))
 
         if context_query.strip():
-            relevant = _lesson_mod.search_relevant(root, context_query, top_n=n)
+            relevant = _lesson_mod.search_relevant_with_source(root, context_query, top_n=n)
             if relevant:
                 parts = ["## 관련 교훈 (BM25 — 현재 작업 기준)"]
-                for title, rule in relevant:
+                for title, rule, filename in relevant:
                     parts.append(f"\n### {title}")
                     parts.append(f"규칙: {rule}")
+                    parts.append(f"파일: {filename}")
                 return "\n".join(parts)
     except Exception:
         pass
@@ -144,6 +145,7 @@ def _collect_lessons(root, git_info: dict | None = None, n: int = 5) -> str:
         if tags_line:
             parts.append(tags_line)
         parts.append(f"규칙: {rule}")
+        parts.append(f"파일: {f.name}")
     return "\n".join(parts)
 
 
@@ -174,7 +176,7 @@ def write_lessons_inject(root: Path, top_n: int = 3) -> None:
             git_info.get("commits", ""),
         ]))
         if context_query.strip():
-            relevant = _lesson_mod.search_relevant(root, context_query, top_n=top_n)
+            relevant = _lesson_mod.search_relevant_with_source(root, context_query, top_n=top_n)
         else:
             relevant = []
     except Exception:
@@ -185,9 +187,10 @@ def write_lessons_inject(root: Path, top_n: int = 3) -> None:
     parts.append("")
 
     if relevant:
-        for title, rule in relevant:
+        for title, rule, filename in relevant:
             parts.append(f"## {title}")
             parts.append(f"- {rule}")
+            parts.append(f"파일: {filename}")
             parts.append("")
     else:
         # BM25 히트 없으면 최신순 top_n
@@ -198,6 +201,7 @@ def write_lessons_inject(root: Path, top_n: int = 3) -> None:
             rule = lines[rule_idx + 1].strip() if rule_idx is not None and rule_idx + 1 < len(lines) else "(없음)"
             parts.append(f"## {title}")
             parts.append(f"- {rule}")
+            parts.append(f"파일: {f.name}")
             parts.append("")
 
     rules_dir = root / ".cursor" / "rules"
@@ -219,7 +223,7 @@ def _print_lessons_to_console(root: Path, git_info: dict | None = None, n: int =
     if not files:
         return
 
-    entries: list[tuple[str, str]] = []  # (title, rule)
+    entries: list[tuple[str, str, str]] = []  # (title, rule, filename)
 
     # BM25 검색 시도
     try:
@@ -233,7 +237,7 @@ def _print_lessons_to_console(root: Path, git_info: dict | None = None, n: int =
             ]))
 
         if context_query.strip():
-            relevant = _lesson_mod.search_relevant(root, context_query, top_n=n)
+            relevant = _lesson_mod.search_relevant_with_source(root, context_query, top_n=n)
             if relevant:
                 entries = relevant
     except Exception:
@@ -246,12 +250,13 @@ def _print_lessons_to_console(root: Path, git_info: dict | None = None, n: int =
             title = next((l.lstrip("# ").strip() for l in lines if l.startswith("# ")), f.stem)
             rule_idx = next((i for i, l in enumerate(lines) if l.startswith("## 적용된 규칙")), None)
             rule = lines[rule_idx + 1].strip() if rule_idx is not None and rule_idx + 1 < len(lines) else "(없음)"
-            entries.append((title, rule))
+            entries.append((title, rule, f.name))
 
     count = len(entries)
     print(f"[CONTEXT] 💡 관련 교훈 {count}개")
-    for title, rule in entries:
+    for title, rule, filename in entries:
         print(f"          ▸ {title}")
+        print(f"            파일: {filename}")
         if rule and rule != "(없음)":
             rule_preview = rule[:80] + ("…" if len(rule) > 80 else "")
             print(f"            규칙: {rule_preview}")
