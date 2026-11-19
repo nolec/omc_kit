@@ -15,11 +15,15 @@ omc_lesson.py — Compound Engineering 교훈 관리
 from __future__ import annotations
 
 import argparse
+import json
+import os
+import stat
 import math
 import re
 import sys
+import tempfile
 from collections import Counter
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 _LESSONS_DIR = ".omc/lessons"
@@ -134,6 +138,69 @@ def _snippet(content: str, query_tokens: list[str], max_len: int = 120) -> str:
 # 커맨드
 # ---------------------------------------------------------------------------
 
+def _retraction(path: Path) -> Path:
+    return path.with_suffix(".md.retracted.json")
+
+
+def active_lesson_files(root: Path) -> list[Path]:
+    """Return eligible lessons in the existing newest-first order."""
+    return [path for path in sorted((root / _LESSONS_DIR).glob("*.md"), reverse=True)
+            if not os.path.lexists(_retraction(path))]
+
+
+def cmd_retract(root: Path, filename: str, reason: str, replacement: str | None) -> int:
+    folder = root / _LESSONS_DIR
+
+    def lesson_path(name: str) -> Path:
+        if Path(name).name != name or Path(name).suffix != ".md":
+            raise ValueError("정확한 교훈 파일명(.md)이 필요합니다.")
+        path = folder / name
+        if path.is_symlink() or not path.is_file():
+            raise ValueError(f"교훈 파일을 찾을 수 없습니다: {name}")
+        return path
+
+    try:
+        if not reason.strip():
+            raise ValueError("철회 이유가 필요합니다.")
+        if folder.resolve() != folder:
+            raise ValueError("심볼릭 링크 교훈 경로는 사용할 수 없습니다.")
+        original = lesson_path(filename)
+        if replacement is not None:
+            target = lesson_path(replacement)
+            if target == original or os.path.lexists(_retraction(target)):
+                raise ValueError("대체 교훈은 현재 활성 상태인 다른 교훈이어야 합니다.")
+        record = {"reason": reason.strip(), "replacement": replacement,
+                  "retracted_at": datetime.now(timezone.utc).isoformat()}
+        with tempfile.TemporaryDirectory(prefix=".retract-", dir=folder) as temporary:
+            staged = Path(temporary) / "record.json"
+            staged.write_text(json.dumps(record, ensure_ascii=False, indent=2) + "\n",
+                              encoding="utf-8")
+            os.link(staged, _retraction(original))
+    except (OSError, ValueError) as error:
+        print(f"[LESSON] 철회 실패: {error}", file=sys.stderr)
+        return 1
+    print(f"[LESSON] 철회됨: {filename}")
+    return 0
+
+
+def _show_retraction(path: Path) -> None:
+    marker = _retraction(path)
+    if not os.path.lexists(marker):
+        return
+    print("[LESSON] 철회됨")
+    try:
+        if not stat.S_ISREG(marker.lstat().st_mode):
+            raise ValueError("invalid marker")
+        record = json.loads(marker.read_text(encoding="utf-8"))
+        if not isinstance(record, dict) or not isinstance(record.get("reason"), str):
+            raise ValueError("invalid record")
+        print(f"철회 이유: {record['reason']}")
+        if record.get("replacement"):
+            print(f"대체 교훈: {record['replacement']}")
+    except (OSError, ValueError):
+        print("철회 기록 읽기 실패")
+
+
 def cmd_add(root: Path, args) -> int:
     """대화형 또는 인자로 교훈을 추가한다."""
     title = args.title or input("교훈 제목: ").strip()
@@ -157,6 +224,9 @@ def cmd_add(root: Path, args) -> int:
         tags    = args.tags or "general"
 
     path = _lesson_path(root, title)
+    if os.path.lexists(_retraction(path)):
+        print("[LESSON] 철회된 교훈은 덮어쓸 수 없습니다.", file=sys.stderr)
+        return 1
     path.write_text(
         _TEMPLATE.format(
             title=title,
@@ -212,7 +282,7 @@ def cmd_search(root: Path, query: str, top_n: int = 5) -> int:
         print("[LESSON] 교훈 없음")
         return 0
 
-    files = sorted(lessons_dir.glob("*.md"), reverse=True)
+    files = active_lesson_files(root)
     if not files:
         print("[LESSON] 교훈 없음")
         return 0
@@ -255,7 +325,7 @@ def cmd_show(root: Path, filename: str) -> int:
     lessons_dir = root / _LESSONS_DIR
     path = lessons_dir / filename
     if not path.exists():
-        candidates = list(lessons_dir.glob(f"*{filename}*"))
+        candidates = [p for p in lessons_dir.glob("*.md") if filename in p.name]
         if len(candidates) == 1:
             path = candidates[0]
         elif len(candidates) > 1:
@@ -267,6 +337,7 @@ def cmd_show(root: Path, filename: str) -> int:
             print(f"[LESSON] {filename} 없음")
             return 1
 
+    _show_retraction(path)
     print(path.read_text(encoding="utf-8"))
     return 0
 
@@ -277,7 +348,7 @@ def cmd_recent(root: Path, n: int = 5) -> int:
     if not lessons_dir.exists():
         return 0
 
-    files = sorted(lessons_dir.glob("*.md"), reverse=True)[:n]
+    files = active_lesson_files(root)[:n]
     if not files:
         return 0
 
@@ -308,7 +379,7 @@ def search_relevant(root: Path, context_text: str, top_n: int = 3) -> list[tuple
         return []
     docs = [
         (f, f.read_text(encoding="utf-8"))
-        for f in sorted(lessons_dir.glob("*.md"), reverse=True)
+        for f in active_lesson_files(root)
     ]
     if not docs:
         return []
@@ -357,6 +428,11 @@ def main() -> int:
     p_show = sub.add_parser("show", help="교훈 상세 출력")
     p_show.add_argument("filename", help="파일명 (부분 매칭 가능)")
 
+    p_retract = sub.add_parser("retract", help="원문을 보존하고 검색과 추천에서 교훈을 제외")
+    p_retract.add_argument("filename")
+    p_retract.add_argument("--reason", required=True)
+    p_retract.add_argument("--replacement", help="현재 활성 상태인 대체 교훈의 정확한 파일명")
+
     p_recent = sub.add_parser("recent", help="최근 교훈 요약 (context 주입용)")
     p_recent.add_argument("--n", type=int, default=5)
 
@@ -371,6 +447,8 @@ def main() -> int:
         return cmd_search(root, args.query, args.top)
     if args.cmd == "show":
         return cmd_show(root, args.filename)
+    if args.cmd == "retract":
+        return cmd_retract(root, args.filename, args.reason, args.replacement)
     if args.cmd == "recent":
         return cmd_recent(root, args.n)
     return 1

@@ -62,6 +62,8 @@ python3 scripts/omc.py autopilot --task-file .omc/tasks/feat-x.json --dry-run
 
 Superpowers 계획을 재개하기 전에 `python3 scripts/omc.py state status --target . --superpowers-ledger .superpowers/sdd/PLAN/progress.md`로 명시한 원장을 점검할 수 있습니다. 저장소 안의 원장에 적힌 마지막 완료 범위의 두 커밋을 해석하고, 범위가 유효하며 끝 커밋이 현재 HEAD에 포함되는지 확인합니다. 결과는 `INCLUDED`(0), `NOT_INCLUDED`(1), `UNKNOWN`(2)입니다. 이력 누락이나 모호한 커밋은 판별 불가이며, 이력 재작성 뒤 같은 변경이 다시 적용됐는지는 비교하지 않습니다. 옵션을 생략하면 기존 상태 요약을 표시합니다.
 
+잘못된 교훈을 철회하려면 `python3 scripts/omc_lesson.py --target . retract OLD.md --reason "정책 변경" --replacement NEW.md`를 실행합니다. 대체 교훈은 이미 저장된 활성 교훈의 정확한 파일명이며, 아직 대체 교훈이 없다면 옵션을 생략할 수 있습니다. 철회 기록은 원문 옆에 별도로 남습니다. `show OLD.md`로 원문과 철회 이유를 볼 수 있습니다. 검색과 새 컨텍스트 추천에는 활성 교훈만 포함되며, 이전에 생성한 컨텍스트는 다시 생성해야 반영됩니다.
+
 ## 명시적 검증 & CI
 
 커밋 전 staged 변경의 TDD 게이트를 확인합니다.

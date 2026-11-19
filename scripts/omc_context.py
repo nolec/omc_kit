@@ -14,6 +14,8 @@ omc_context.py — 세션 시작 시 프로젝트 컨텍스트 자동 수집 + �
 """
 from __future__ import annotations
 import argparse, json, subprocess, sys
+
+from omc_lesson import active_lesson_files
 from datetime import datetime
 from pathlib import Path
 
@@ -103,7 +105,7 @@ def _collect_lessons(root, git_info: dict | None = None, n: int = 5) -> str:
     lessons_dir = root / ".omc" / "lessons"
     if not lessons_dir.exists():
         return ""
-    files = sorted(lessons_dir.glob("*.md"), reverse=True)
+    files = active_lesson_files(root)
     if not files:
         return ""
 
@@ -157,7 +159,7 @@ def write_lessons_inject(root: Path, top_n: int = 3) -> None:
     if not lessons_dir.exists():
         out_path.unlink(missing_ok=True)
         return
-    files = sorted(lessons_dir.glob("*.md"), reverse=True)
+    files = active_lesson_files(root)
     if not files:
         out_path.unlink(missing_ok=True)
         return
@@ -213,7 +215,7 @@ def _print_lessons_to_console(root: Path, git_info: dict | None = None, n: int =
     lessons_dir = root / ".omc" / "lessons"
     if not lessons_dir.exists():
         return
-    files = sorted(lessons_dir.glob("*.md"), reverse=True)
+    files = active_lesson_files(root)
     if not files:
         return
 
