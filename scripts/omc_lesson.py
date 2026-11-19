@@ -183,21 +183,56 @@ def cmd_retract(root: Path, filename: str, reason: str, replacement: str | None)
     return 0
 
 
+def _read_retraction(marker: Path) -> dict:
+    flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
+    with os.fdopen(os.open(marker, flags), encoding="utf-8") as stream:
+        if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+            raise ValueError("invalid marker")
+        record = json.load(stream)
+    if not isinstance(record, dict) or not isinstance(record.get("reason"), str):
+        raise ValueError("invalid record")
+    return record
+
+
+def _replacement_status(original: Path, filename: object) -> str:
+    if (not isinstance(filename, str) or "\x00" in filename
+            or Path(filename).name != filename or Path(filename).suffix != ".md"
+            or filename == original.name):
+        return "확인 불가"
+    target = original.with_name(filename)
+    try:
+        if original.parent.resolve() != original.parent:
+            return "확인 불가"
+        if not stat.S_ISREG(target.lstat().st_mode):
+            return "확인 불가"
+    except FileNotFoundError:
+        return "파일 없음"
+    except (OSError, RuntimeError):
+        return "확인 불가"
+    try:
+        _read_retraction(_retraction(target))
+    except FileNotFoundError:
+        return "활성"
+    except (OSError, ValueError, RecursionError):
+        return "확인 불가"
+    return "다시 철회됨"
+
+
 def _show_retraction(path: Path) -> None:
     marker = _retraction(path)
     if not os.path.lexists(marker):
         return
     print("[LESSON] 철회됨")
     try:
-        if not stat.S_ISREG(marker.lstat().st_mode):
-            raise ValueError("invalid marker")
-        record = json.loads(marker.read_text(encoding="utf-8"))
-        if not isinstance(record, dict) or not isinstance(record.get("reason"), str):
-            raise ValueError("invalid record")
+        record = _read_retraction(marker)
         print(f"철회 이유: {record['reason']}")
-        if record.get("replacement"):
-            print(f"대체 교훈: {record['replacement']}")
-    except (OSError, ValueError):
+        replacement = record.get("replacement")
+        if replacement is not None:
+            status = _replacement_status(path, replacement)
+            if isinstance(replacement, str) and replacement.isprintable():
+                print(f"대체 교훈: {replacement}")
+            print(f"대체 교훈 상태: {status}")
+    except (OSError, ValueError, RecursionError):
         print("철회 기록 읽기 실패")
 
 
