@@ -1186,13 +1186,23 @@ def verify_capture(
     return receipt
 
 
-def _validate_verification_artifacts(capture_dir: Path, result: dict[str, object]) -> None:
+def _validate_verification_artifacts(
+    capture_dir: Path, result: dict[str, object], *, read_root: Path | None = None,
+) -> None:
     for item in result.get("results", []):
         if not isinstance(item, dict):
             raise ValueError("verification artifact invalid")
         for stream in ("stdout", "stderr"):
             path = capture_dir / str(item.get(f"{stream}_path", ""))
-            data = _regular_bytes(path)
+            if read_root is None:
+                data = _regular_bytes(path)
+            else:
+                name = item.get(f"{stream}_path")
+                if not isinstance(name, str) or not re.fullmatch(rf"verification-[0-9]+\.{stream}", name):
+                    raise ValueError("verification artifact path invalid")
+                data = _status_read_bytes(path, read_root)
+                if data is None:
+                    raise ValueError("verification artifact missing")
             if (
                 len(data) != item.get(f"{stream}_size")
                 or hashlib.sha256(data).hexdigest() != item.get(f"{stream}_sha256")
@@ -1430,10 +1440,62 @@ def finish_capture(
     return receipt
 
 
-def completion_lookup(root: Path, session_id: str, commit: str) -> dict[str, object]:
+def _validate_capture_verification_binding(start: dict, verification: dict) -> None:
+    if (
+        start.get("status") != "READY"
+        or verification.get("status") != "VERIFIED"
+        or verification.get("session_id") != start.get("session_id")
+        or verification.get("work_id") != start.get("work_id")
+        or verification.get("start_capture_sha256") != start.get("capture_sha256")
+    ):
+        raise ValueError("capture receipt binding invalid")
+
+
+def _commit_verification_lookup(
+    root: Path, session_id: str, commit_tree: str, trusted_public_key: str | None,
+) -> dict[str, object]:
+    summary = {"tree_comparison": "UNKNOWN", "passed_for_commit": None}
+    capture_dir = _capture_dir(root, session_id)
+    try:
+        verification = _status_read_json(capture_dir / "verification.json", root)
+        if verification is None:
+            return {**summary, "tree_comparison": "NO_EVIDENCE"}
+        key = _capture_trusted_key(root, trusted_public_key)
+        start = _verify_capture(_status_read_json(capture_dir / "start.json", root), key)
+        verification = _verify_capture(verification, key)
+        _validate_capture_verification_binding(start, verification)
+        if start["session_id"] != session_id:
+            raise ValueError("capture session mismatch")
+        _validate_verification_artifacts(capture_dir, verification, read_root=root)
+        verified_tree = verification.get("verified_tree")
+        if not isinstance(verified_tree, str) or not re.fullmatch(r"[0-9a-f]{40}", verified_tree):
+            raise ValueError("verification tree invalid")
+        recorded_passed = verification.get("verification_passed")
+        if type(recorded_passed) is not bool:
+            raise ValueError("verification result invalid")
+    except (OSError, ValueError, TypeError, KeyError, RecursionError):
+        return {**summary, "reason": "verification_record_unavailable_or_invalid"}
+
+    matches = verified_tree == commit_tree
+    unchanged = (verification.get("tree_unchanged") is True
+                 and verification.get("observed_tree") == verified_tree)
+    return {
+        "tree_comparison": "MATCH" if matches else "MISMATCH",
+        "commit_tree": commit_tree,
+        "verified_tree": verified_tree,
+        "recorded_passed": recorded_passed,
+        "tree_unchanged": unchanged,
+        "passed_for_commit": recorded_passed and unchanged if matches else None,
+    }
+
+
+def completion_lookup(
+    root: Path, session_id: str, commit: str, *, trusted_public_key: str | None = None,
+) -> dict[str, object]:
     """Compare one local receipt with an explicit commit, without writing state."""
     result = {"claim": "LOCAL_COMPLETION_RECORD", "session_id": session_id,
-              "commit": commit, "status": "UNKNOWN"}
+              "commit": commit, "status": "UNKNOWN",
+              "verification": {"tree_comparison": "UNKNOWN", "passed_for_commit": None}}
     oid = r"(?:[0-9a-f]{40}|[0-9a-f]{64})"
     if not re.fullmatch(r"[A-Za-z0-9_-]{1,200}", session_id) or not re.fullmatch(oid, commit):
         return {**result, "reason": "invalid_session_or_commit"}
@@ -1455,6 +1517,10 @@ def completion_lookup(root: Path, session_id: str, commit: str) -> dict[str, obj
             return {**result, "reason": "target_not_repository_root"}
         if git("rev-parse", "--verify", commit + "^{commit}").strip() != commit.encode("ascii"):
             return {**result, "reason": "commit_unresolved"}
+        commit_tree = git("rev-parse", "--verify", commit + "^{tree}").strip().decode("ascii")
+        result["verification"] = _commit_verification_lookup(
+            root, session_id, commit_tree, trusted_public_key,
+        )
         receipt = _status_read_json(_session_path(root, session_id).parent / "completion.json", root)
         if receipt is None:
             return {**result, "status": "NO_RECORD"}
@@ -1504,12 +1570,7 @@ def capture_status(
         user_outcome = None
         if verification_path.exists():
             current = _verify_capture(json.loads(_regular_bytes(verification_path).decode("utf-8")), public_key)
-            if (
-                current.get("session_id") != start.get("session_id")
-                or current.get("work_id") != start.get("work_id")
-                or current.get("start_capture_sha256") != start.get("capture_sha256")
-            ):
-                raise ValueError("capture receipt binding invalid")
+            _validate_capture_verification_binding(start, current)
             _validate_verification_artifacts(capture_dir, current)
             if (
                 not terminal_path.exists()
@@ -3871,6 +3932,18 @@ def _status_path_present(path: Path, root: Path) -> bool:
 
 
 def _status_read_json(path: Path, root: Path, *, jsonl: bool = False) -> dict | list[str] | None:
+    raw = _status_read_bytes(path, root)
+    if raw is None:
+        return None
+    if jsonl:
+        return raw.decode('utf-8').splitlines()
+    data = json.loads(raw)
+    if not isinstance(data, dict):
+        raise ValueError('state_object_required')
+    return data
+
+
+def _status_read_bytes(path: Path, root: Path) -> bytes | None:
     """Bounded, nonblocking regular-file read; reject symlinked state paths."""
     relative = path.relative_to(root)
     nofollow = getattr(os, 'O_NOFOLLOW', 0)
@@ -3891,7 +3964,7 @@ def _status_read_json(path: Path, root: Path, *, jsonl: bool = False) -> dict | 
         except FileNotFoundError:
             return None
         try:
-            return _status_json_from_fd(fd, jsonl=jsonl)
+            return _status_bytes_from_fd(fd)
         finally:
             os.close(fd)
     finally:
@@ -3899,7 +3972,7 @@ def _status_read_json(path: Path, root: Path, *, jsonl: bool = False) -> dict | 
             os.close(descriptor)
 
 
-def _status_json_from_fd(fd: int, *, jsonl: bool = False) -> dict | list[str]:
+def _status_bytes_from_fd(fd: int) -> bytes:
     info = os.fstat(fd)
     limit = 8 * 1024 * 1024
     if not stat.S_ISREG(info.st_mode) or info.st_size > limit:
@@ -3908,12 +3981,7 @@ def _status_json_from_fd(fd: int, *, jsonl: bool = False) -> dict | list[str]:
         raw = source.read(limit + 1)
     if len(raw) > limit:
         raise ValueError('state_too_large')
-    if jsonl:
-        return raw.decode('utf-8').splitlines()
-    data = json.loads(raw)
-    if not isinstance(data, dict):
-        raise ValueError('state_object_required')
-    return data
+    return raw
 
 
 def _status_pipeline_run_count(root: Path) -> int:

@@ -45,5 +45,7 @@ def test_commit_completion_lookup(tmp_path, case, status, code):
         "--target", str(tmp_path), "--session-id", "session-1",
         "--commit", baseline if case == "different" else head], capture_output=True, text=True)
     assert result.returncode == code, result.stderr
-    assert json.loads(result.stdout)["status"] == status
+    payload = json.loads(result.stdout)
+    assert payload["status"] == status
+    assert payload["verification"]["tree_comparison"] == "NO_EVIDENCE"
     assert before == snapshot()

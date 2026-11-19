@@ -753,3 +753,46 @@ def test_omc_cli_exposes_capture_start_and_status(
     )
     assert status.returncode == 0, status.stderr
     assert json.loads(status.stdout)["status"] == "READY"
+
+
+@pytest.mark.parametrize("case, expected, passed", [
+    ("none", "NO_EVIDENCE", None),
+    ("match", "MATCH", True),
+    ("no_completion", "MATCH", True),
+    ("failed", "MATCH", False),
+    ("different", "MISMATCH", None),
+    ("tampered", "UNKNOWN", None),
+])
+def test_completion_lookup_reports_verification_independently(
+    capture_repo, tmp_path, case, expected, passed,
+):
+    repo, private_key, public_key = capture_repo
+    command = "raise SystemExit(1)" if case == "failed" else "print('ok')"
+    plan = _plan(tmp_path / "plan.json", {"argv": [sys.executable, "-c", command], "timeout_sec": 10})
+    start = omc_state.start_capture(
+        repo, plan, signer_private_key=private_key, trusted_public_key=public_key
+    )
+    (repo / "app.py").write_text("print('candidate')\n")
+    _git(repo, "add", "app.py")
+    if case != "none":
+        result = omc_state.verify_capture(
+            repo, signer_private_key=private_key, trusted_public_key=public_key
+        )
+    if case == "different":
+        (repo / "app.py").write_text("print('another candidate')\n")
+        _git(repo, "add", "app.py")
+    _git(repo, "commit", "-qm", "candidate")
+    if case != "no_completion":
+        assert omc_state.record_completion_receipt(repo)["status"] == "ok"
+    if case == "tampered":
+        artifact = omc_state._capture_dir(repo, start["session_id"]) / result["results"][0]["stdout_path"]
+        artifact.write_bytes(b"tampered")
+    before = {p: (p.stat().st_mtime_ns, p.read_bytes()) for p in repo.rglob("*") if p.is_file()}
+    lookup = omc_state.completion_lookup(
+        repo.resolve(), start["session_id"], _git(repo, "rev-parse", "HEAD"),
+        trusted_public_key=public_key,
+    )
+    assert lookup["status"] == ("NO_RECORD" if case == "no_completion" else "MATCH")
+    assert lookup["verification"]["tree_comparison"] == expected
+    assert lookup["verification"]["passed_for_commit"] is passed
+    assert {p: (p.stat().st_mtime_ns, p.read_bytes()) for p in repo.rglob("*") if p.is_file()} == before
