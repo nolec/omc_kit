@@ -3895,6 +3895,82 @@ def compact_state(project_root: Path, *, keep_entries: int = 25) -> dict[str, ob
         }
 
 
+def superpowers_ledger_status(root: Path, ledger: Path) -> dict[str, object]:
+    """Check the last recorded completion against the selected repository."""
+    report: dict[str, object] = {"status": "UNKNOWN", "ledger": str(ledger)}
+    try:
+        path = ledger if ledger.is_absolute() else root / ledger
+        relative = path.relative_to(root)
+        if not relative.parts or ".." in relative.parts:
+            return {**report, "reason": "ledger_outside_repository"}
+        data = _status_read_bytes(path, root)
+        if data is None:
+            return {**report, "reason": "ledger_missing"}
+        lines = data.decode("utf-8").splitlines()
+        if not lines or not re.fullmatch(r"# SDD ledger — plan: \S.*", lines[0]):
+            return {**report, "reason": "ledger_header_invalid"}
+        last = next((line for line in reversed(lines)
+                     if re.match(r"^Task [0-9]+: complete\b", line)), None)
+        if last is None:
+            return {**report, "reason": "no_completed_task"}
+        match = re.fullmatch(
+            r"Task ([0-9]+): complete \(commits ([0-9a-f]{7,64})\.\.([0-9a-f]{7,64}), tests: .+\)",
+            last,
+        )
+        if match is None:
+            return {**report, "reason": "last_completion_range_invalid"}
+        task, base_prefix, end_prefix = match.groups()
+        report.update(task=task, recorded_base=base_prefix, recorded_end=end_prefix)
+        if any(key in os.environ for key in (
+            "GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY",
+            "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_NAMESPACE", "GIT_CONFIG_PARAMETERS",
+            "GIT_CONFIG_COUNT", "GIT_GRAFT_FILE", "GIT_SHALLOW_FILE",
+        )):
+            return {**report, "reason": "git_environment_override"}
+
+        def git(*args: str) -> subprocess.CompletedProcess:
+            return subprocess.run(
+                ["git", "--no-replace-objects", "--no-optional-locks", "-C", str(root), *args],
+                capture_output=True, timeout=5, check=False,
+                env={**os.environ, "GIT_NO_LAZY_FETCH": "1", "GIT_TERMINAL_PROMPT": "0"},
+            )
+
+        def output(*args: str) -> bytes:
+            result = git(*args)
+            result.check_returncode()
+            return result.stdout
+
+        def resolve_commit(prefix: str) -> str:
+            objects = output("rev-parse", "--disambiguate=" + prefix).splitlines()
+            if len(objects) != 1 or output("cat-file", "-t", objects[0].decode("ascii")).strip() != b"commit":
+                raise ValueError("recorded_commit_not_unique")
+            return objects[0].decode("ascii")
+
+        def ancestor(base: str, end: str) -> bool:
+            result = git("merge-base", "--is-ancestor", base, end)
+            if result.returncode != 1:
+                result.check_returncode()
+            return result.returncode == 0
+
+        if output("rev-parse", "--show-toplevel") != os.fsencode(root) + b"\n":
+            return {**report, "reason": "target_not_repository_root"}
+        grafts = Path(os.fsdecode(output("rev-parse", "--git-path", "info/grafts").removesuffix(b"\n")))
+        if os.path.lexists(root / grafts):
+            return {**report, "reason": "git_grafts_present"}
+        head = output("rev-parse", "--verify", "HEAD^{commit}").strip().decode("ascii")
+        base, end = resolve_commit(base_prefix), resolve_commit(end_prefix)
+        report.update(head=head, range_base=base, range_end=end)
+        if not ancestor(base, end):
+            return {**report, "reason": "recorded_range_not_verified"}
+        if ancestor(end, head):
+            return {**report, "status": "INCLUDED"}
+        if output("rev-parse", "--is-shallow-repository").strip() != b"false":
+            return {**report, "reason": "history_incomplete"}
+        return {**report, "status": "NOT_INCLUDED"}
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return {**report, "reason": "ledger_or_git_unavailable"}
+
+
 def status(project_root: Path) -> str:
     try:
         return _status_read_only(project_root)
@@ -4258,6 +4334,7 @@ def _parser() -> argparse.ArgumentParser:
 
     status_cmd = sub.add_parser("status", help="Show current state summary.")
     status_cmd.add_argument("--target", type=Path, default=Path.cwd(), help="Target repository root.")
+    status_cmd.add_argument("--superpowers-ledger", type=Path, help="Explicit Superpowers progress.md path within the repository.")
 
     complete = sub.add_parser("complete", help="Record a verified receipt for the latest commit.")
     complete.add_argument("--target", type=Path, default=Path.cwd(), help="Target repository root.")
@@ -4409,6 +4486,10 @@ def main() -> int:
         return 0
 
     if args.command == "status":
+        if args.superpowers_ledger is not None:
+            report = superpowers_ledger_status(args.target.resolve(), args.superpowers_ledger)
+            print(json.dumps(report, ensure_ascii=True, sort_keys=True))
+            return {"INCLUDED": 0, "NOT_INCLUDED": 1, "UNKNOWN": 2}[report["status"]]
         print(status(omc_utils.project_root(args.target)))
         return 0
 

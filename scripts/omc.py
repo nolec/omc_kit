@@ -567,6 +567,7 @@ def main() -> int:
 
     state_status = state_sub.add_parser("status", help="Show current state summary.")
     state_status.add_argument("--target", type=Path, default=Path.cwd(), help="Target repository root.")
+    state_status.add_argument("--superpowers-ledger", type=Path, help="Explicit Superpowers progress.md path within the repository.")
 
     state_complete = state_sub.add_parser("complete", help="Record a verified receipt for the latest commit.")
     state_complete.add_argument("--target", type=Path, default=Path.cwd(), help="Target repository root.")
@@ -1172,7 +1173,10 @@ def main() -> int:
                 raise SystemExit(compact_code)
             return _run_script(hook_script, ["post_compact", "--target", str(args.target)])
         if args.state_command == "status":
-            return _run_script(state_script, ["status", "--target", str(args.target)])
+            forwarded = ["status", "--target", str(args.target)]
+            if args.superpowers_ledger is not None:
+                forwarded.append("--superpowers-ledger=" + str(args.superpowers_ledger))
+            return _run_script(state_script, forwarded)
         if args.state_command == "complete":
             return _run_script(state_script, ["complete", "--target", str(args.target)])
         if args.state_command == "capture-start":

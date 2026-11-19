@@ -60,6 +60,8 @@ python3 scripts/omc.py autopilot --task-file .omc/tasks/feat-x.json --dry-run
 
 특정 세션의 로컬 완료 기록은 `python3 scripts/omc.py state capture-status --target . --session-id SESSION --commit FULL_COMMIT_ID`로 조회합니다. `MATCH`(0)는 기록이 지정 커밋과 일치함을 뜻합니다. `MISMATCH` 또는 `NO_RECORD`(1)는 각각 다른 커밋의 기록 또는 지정 세션의 기록 없음이며, 판별할 수 없으면 `UNKNOWN`(2)입니다. 기록의 부모 커밋과 변경 경로를 Git과 대조합니다. 별도 `verification.tree_comparison`은 지정 세션의 서명된 검증 기록과 커밋 트리를 비교합니다. 기록이 없으면 `NO_EVIDENCE`, 서명 또는 출력 근거를 검증할 수 없으면 `UNKNOWN`입니다. `passed_for_commit`은 트리가 일치할 때의 검증 결과이며, 트리가 다르거나 근거가 없으면 `null`입니다. 종료 코드는 기존 완료 기록 판정을 따릅니다. 두 옵션을 생략하면 기존 리허설 상태를 표시합니다.
 
+Superpowers 계획을 재개하기 전에 `python3 scripts/omc.py state status --target . --superpowers-ledger .superpowers/sdd/PLAN/progress.md`로 명시한 원장을 점검할 수 있습니다. 저장소 안의 원장에 적힌 마지막 완료 범위의 두 커밋을 해석하고, 범위가 유효하며 끝 커밋이 현재 HEAD에 포함되는지 확인합니다. 결과는 `INCLUDED`(0), `NOT_INCLUDED`(1), `UNKNOWN`(2)입니다. 이력 누락이나 모호한 커밋은 판별 불가이며, 이력 재작성 뒤 같은 변경이 다시 적용됐는지는 비교하지 않습니다. 옵션을 생략하면 기존 상태 요약을 표시합니다.
+
 ## 명시적 검증 & CI
 
 커밋 전 staged 변경의 TDD 게이트를 확인합니다.
