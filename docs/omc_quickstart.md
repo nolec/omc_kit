@@ -58,6 +58,8 @@ python3 scripts/omc.py autopilot --task-file .omc/tasks/feat-x.json --dry-run
 명시한 작업 경로와 현재 staged 경로를 읽기 전용으로 비교하려면 `python3 scripts/omc.py scope-check --target . --expected-path scripts/example.py`를 실행합니다. 경로마다 `--expected-path`를 반복하고 저장소 루트 기준으로 지정합니다. JSON의 `MATCH`/`MISMATCH`는 **경로만** 비교하며 각각 종료 코드 0/1입니다. 경로 누락, 충돌 또는 Git 조회 실패는 `UNKNOWN`(종료 코드 2)입니다. 이름 변경은 이전·이후 경로를 모두 지정합니다. 출력의 unstaged와 untracked는 Git이 보고하는 범위이며 무시된 파일과 `assume-unchanged`·`skip-worktree` 등으로 Git이 숨긴 변경은 누락될 수 있습니다. `path_comparison`은 경로 일치만 뜻하며 `content_status: NOT_VERIFIED`는 내용 미검증을 뜻합니다. 같은 파일에 staged·unstaged 변경이 있으면 `staged_and_unstaged`와 `warnings`에 표시되므로 staged 내용에 새 작업이 포함됐다고 추정하지 마세요. 내용 검증, 사용자 승인, 리뷰, staging 또는 커밋을 수행하지 않습니다. 실행 시점의 스냅샷이므로 이후 변경은 별도로 확인해야 합니다.
 
 
+특정 세션의 로컬 완료 기록은 `python3 scripts/omc.py state capture-status --target . --session-id SESSION --commit FULL_COMMIT_ID`로 조회합니다. `MATCH`(0)는 기록이 지정 커밋과 일치함을 뜻합니다. `MISMATCH` 또는 `NO_RECORD`(1)는 각각 다른 커밋의 기록 또는 지정 세션의 기록 없음이며, 판별할 수 없으면 `UNKNOWN`(2)입니다. 기록의 부모 커밋과 변경 경로를 Git과 대조합니다. 이 조회는 테스트 결과나 훅 실행 여부를 판정하지 않습니다. 두 옵션을 생략하면 기존 리허설 상태를 표시합니다.
+
 ## 명시적 검증 & CI
 
 커밋 전 staged 변경의 TDD 게이트를 확인합니다.

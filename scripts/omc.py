@@ -588,6 +588,8 @@ def main() -> int:
     state_capture_finish.add_argument("--correction-file", type=Path, default=None)
 
     state_capture_status = state_sub.add_parser("capture-status", help="Show fail-closed capture status JSON.")
+    state_capture_status.add_argument("--session-id")
+    state_capture_status.add_argument("--commit", help="Full Git commit ID for a local receipt lookup.")
     state_capture_status.add_argument("--target", type=Path, default=Path.cwd(), help="Target repository root.")
 
     state_confirm = state_sub.add_parser("confirm", help="Mark the latest or a specific session as confirmed.")
@@ -1198,7 +1200,12 @@ def main() -> int:
                 forwarded.extend(["--correction-file", str(args.correction_file.resolve())])
             return _run_script(state_script, forwarded)
         if args.state_command == "capture-status":
-            return _run_script(state_script, ["capture-status", "--target", str(args.target)])
+            forwarded = ["capture-status", "--target", str(args.target)]
+            for name in ("session_id", "commit"):
+                value = getattr(args, name)
+                if value is not None:
+                    forwarded.append("--" + name.replace("_", "-") + "=" + value)
+            return _run_script(state_script, forwarded)
         if args.state_command == "confirm":
             # TDD 게이트: 컨펌 전에 staged 파일 TDD 체크
             tdd_script = args.target / "scripts" / "omc_tdd_check.py"

@@ -1430,6 +1430,56 @@ def finish_capture(
     return receipt
 
 
+def completion_lookup(root: Path, session_id: str, commit: str) -> dict[str, object]:
+    """Compare one local receipt with an explicit commit, without writing state."""
+    result = {"claim": "LOCAL_COMPLETION_RECORD", "session_id": session_id,
+              "commit": commit, "status": "UNKNOWN"}
+    oid = r"(?:[0-9a-f]{40}|[0-9a-f]{64})"
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,200}", session_id) or not re.fullmatch(oid, commit):
+        return {**result, "reason": "invalid_session_or_commit"}
+    if any(key in os.environ for key in (
+        "GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY",
+        "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_NAMESPACE", "GIT_CONFIG_PARAMETERS",
+        "GIT_CONFIG_COUNT",
+    )):
+        return {**result, "reason": "git_environment_override"}
+
+    def git(*args: str) -> bytes:
+        return subprocess.check_output(
+            ["git", "--no-replace-objects", "--no-optional-locks", "-C", str(root), *args],
+            stderr=subprocess.DEVNULL, timeout=5,
+        )
+
+    try:
+        if git("rev-parse", "--show-toplevel") != os.fsencode(root) + b"\n":
+            return {**result, "reason": "target_not_repository_root"}
+        if git("rev-parse", "--verify", commit + "^{commit}").strip() != commit.encode("ascii"):
+            return {**result, "reason": "commit_unresolved"}
+        receipt = _status_read_json(_session_path(root, session_id).parent / "completion.json", root)
+        if receipt is None:
+            return {**result, "status": "NO_RECORD"}
+        recorded = receipt.get("followup_commit")
+        baseline = receipt.get("baseline_commit")
+        paths = receipt.get("changed_paths")
+        if (type(receipt.get("schema_version")) is not int
+                or receipt["schema_version"] not in {1, 2}
+                or receipt.get("session_id") != session_id
+                or not isinstance(recorded, str) or not re.fullmatch(oid, recorded)
+                or not isinstance(baseline, str) or not re.fullmatch(oid, baseline)
+                or not isinstance(paths, list) or not paths
+                or any(not isinstance(path, str) or not path for path in paths)):
+            return {**result, "reason": "invalid_receipt"}
+        parent = git("rev-parse", "--verify", recorded + "^1").strip().decode("ascii")
+        changed = git("diff", "--no-ext-diff", "--no-textconv", "--name-only", "-z",
+                      baseline, recorded, "--")
+        if parent != baseline or sorted(os.fsdecode(p) for p in changed.split(b"\0") if p) != sorted(paths):
+            return {**result, "reason": "receipt_git_binding_mismatch"}
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return {**result, "reason": "record_or_git_unavailable"}
+    return {**result, "status": "MATCH" if commit == recorded else "MISMATCH",
+            "recorded_commit": recorded}
+
+
 def capture_status(
     project_root: Path,
     *,
@@ -4161,6 +4211,8 @@ def _parser() -> argparse.ArgumentParser:
     capture_finish.add_argument("--correction-file", type=Path, default=None)
 
     capture_status_cmd = sub.add_parser("capture-status", help="Show fail-closed capture status JSON.")
+    capture_status_cmd.add_argument("--session-id")
+    capture_status_cmd.add_argument("--commit", help="Full Git commit ID for a local receipt lookup.")
     capture_status_cmd.add_argument("--target", type=Path, default=Path.cwd(), help="Target repository root.")
 
     confirm = sub.add_parser("confirm", help="Mark the latest or a specific session as confirmed.")
@@ -4329,6 +4381,10 @@ def main() -> int:
         return 0
 
     if args.command == "capture-status":
+        if args.commit is not None or args.session_id is not None:
+            result = completion_lookup(args.target.resolve(), args.session_id or "", args.commit or "")
+            print(json.dumps(result, ensure_ascii=False, sort_keys=True))
+            return {"MATCH": 0, "MISMATCH": 1, "NO_RECORD": 1, "UNKNOWN": 2}[result["status"]]
         result = capture_status(omc_utils.project_root(args.target))
         print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
         return 2 if result.get("status") == "BLOCKED" else 0
