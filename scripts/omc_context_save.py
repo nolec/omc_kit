@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
@@ -46,6 +47,56 @@ def _git_context(root: Path) -> dict:
         "commit": _run(["git", "rev-parse", "--short", "HEAD"]),
         "subject": _run(["git", "log", "-1", "--format=%s"]),
     }
+
+
+def _restore_history(root: Path, saved_commit: object) -> tuple[str, str]:
+    """Return current HEAD and its relationship to the saved object ID."""
+    def git(*args: str) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            ["git", "--no-replace-objects", "--no-optional-locks", *args],
+            cwd=root, capture_output=True, text=True, timeout=5,
+            env={**os.environ, "GIT_NO_LAZY_FETCH": "1"},
+        )
+
+    unknown = "확인 불가"
+    head = ""
+    try:
+        if any(name in os.environ for name in (
+            "GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY",
+            "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_NAMESPACE", "GIT_GRAFT_FILE",
+            "GIT_SHALLOW_FILE", "GIT_CONFIG_COUNT", "GIT_CONFIG_PARAMETERS",
+        )):
+            return head, unknown
+        current = git("rev-parse", "--verify", "HEAD^{commit}")
+        if current.returncode != 0:
+            return head, unknown
+        head = current.stdout.strip()
+        if not isinstance(saved_commit, str) or not re.fullmatch(r"[a-f0-9]{4,64}", saved_commit):
+            return head, unknown
+        # Resolve old abbreviated IDs as objects, independently of similarly named refs.
+        matches = git("rev-parse", "--disambiguate=" + saved_commit)
+        objects = matches.stdout.splitlines()
+        if matches.returncode != 0 or len(objects) != 1:
+            return head, unknown
+        saved = objects[0]
+        kind = git("cat-file", "-t", saved)
+        if kind.returncode != 0 or kind.stdout.strip() != "commit":
+            return head, unknown
+        if saved == head:
+            return head, "같은 지점"
+        grafts = git("rev-parse", "--git-path", "info/grafts")
+        if grafts.returncode != 0 or os.path.lexists(root / grafts.stdout.removesuffix("\n")):
+            return head, unknown
+        ancestry = git("merge-base", "--is-ancestor", saved, head)
+        if ancestry.returncode == 0:
+            return head, "현재 이력이 앞섬"
+        if ancestry.returncode == 1:
+            shallow = git("rev-parse", "--is-shallow-repository")
+            if shallow.returncode == 0 and shallow.stdout.strip() == "false":
+                return head, "현재 이력에 없음"
+    except (OSError, ValueError, subprocess.SubprocessError):
+        pass
+    return head, unknown
 
 
 def cmd_save(
@@ -97,6 +148,9 @@ def cmd_restore(root: Path) -> int:
         print(f"저장 시각  : {saved_at}")
     if branch or commit:
         print(f"브랜치/커밋: {branch} @ {commit}  {subject}")
+    head, relationship = _restore_history(root, commit)
+    print(f"현재 HEAD  : {head or '확인 불가'}")
+    print(f"저장 커밋과 현재 HEAD: {relationship}")
 
     decisions = data.get("decisions", "")
     remaining = data.get("remaining", "")
@@ -105,7 +159,7 @@ def cmd_restore(root: Path) -> int:
     if decisions:
         print(f"\n결정 사항:\n  {decisions}")
     if remaining:
-        print(f"\n남은 작업:\n  {remaining}")
+        print(f"\n남은 작업 (저장 당시 메모):\n  {remaining}")
     if failed:
         print(f"\n실패한 접근:\n  {failed}")
     print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
