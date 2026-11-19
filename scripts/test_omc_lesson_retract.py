@@ -84,3 +84,56 @@ def test_show_reports_current_replacement_state_read_only(tmp_path):
     show("파일 없음")
     replacement.symlink_to(original)
     show("확인 불가")
+
+
+def test_doctor_checks_multiple_replacements_without_writes(tmp_path):
+    folder = tmp_path / ".omc/lessons"
+    folder.mkdir(parents=True)
+    for name in ("old", "middle", "live", "deleted", "missing-link", "broken", "standalone"):
+        (folder / f"{name}.md").write_text(f"# {name}\n")
+    assert omc_lesson.cmd_retract(tmp_path, "old.md", "outdated", "middle.md") == 0
+    assert omc_lesson.cmd_retract(tmp_path, "middle.md", "outdated", "live.md") == 0
+    assert omc_lesson.cmd_retract(tmp_path, "missing-link.md", "outdated", "deleted.md") == 0
+    assert omc_lesson.cmd_retract(tmp_path, "standalone.md", "outdated", None) == 0
+    (folder / "deleted.md").unlink()
+    (folder / "broken.md.retracted.json").write_text("{broken")
+
+    def snapshot():
+        return {p: (p.stat().st_mtime_ns, p.read_bytes()) for p in folder.iterdir()}
+
+    before = snapshot()
+    result = subprocess.run(
+        [sys.executable, "-B", omc_lesson.__file__, "--target", str(tmp_path), "doctor"],
+        capture_output=True, text=True,
+    )
+    assert result.returncode == 1, result.stderr
+    for line in ("old.md → middle.md: 다시 철회됨", "middle.md → live.md: 활성",
+                 "missing-link.md → deleted.md: 파일 없음", "broken.md: 확인 불가",
+                 "대체 지정 없음 1"):
+        assert line in result.stdout
+    assert snapshot() == before
+
+
+def test_doctor_treats_missing_lessons_directory_as_empty(tmp_path):
+    result = subprocess.run(
+        [sys.executable, "-B", omc_lesson.__file__, "--target", str(tmp_path), "doctor"],
+        capture_output=True, text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "철회 기록 0개" in result.stdout
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_doctor_reports_orphan_and_refuses_symlink_directory(tmp_path, capsys):
+    folder = tmp_path / ".omc/lessons"
+    folder.mkdir(parents=True)
+    marker = folder / "missing.md.retracted.json"
+    marker.write_text('{"reason":"old","replacement":null}')
+    assert omc_lesson.cmd_doctor(tmp_path) == 1
+    assert "원본 교훈 확인 필요 1" in capsys.readouterr().out
+    elsewhere = tmp_path / "other"
+    folder.rename(elsewhere)
+    folder.symlink_to(elsewhere, target_is_directory=True)
+    assert omc_lesson.cmd_doctor(tmp_path) == 2
+    assert "진단 불가" in capsys.readouterr().err
+    assert (elsewhere / marker.name).read_text() == '{"reason":"old","replacement":null}'

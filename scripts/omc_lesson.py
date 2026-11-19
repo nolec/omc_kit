@@ -236,6 +236,56 @@ def _show_retraction(path: Path) -> None:
         print("철회 기록 읽기 실패")
 
 
+def cmd_doctor(root: Path) -> int:
+    """Report direct replacement links using the same checks as show."""
+    folder = root / _LESSONS_DIR
+    suffix = ".retracted.json"
+    try:
+        if folder.resolve() != folder:
+            raise ValueError("심볼릭 링크 교훈 경로는 사용할 수 없습니다.")
+        try:
+            markers = sorted(p for p in folder.iterdir() if p.name.endswith(".md" + suffix))
+        except FileNotFoundError:
+            markers = []
+    except (OSError, RuntimeError, ValueError) as error:
+        print(f"[LESSON] 진단 불가: {error}", file=sys.stderr)
+        return 2
+
+    counts = dict.fromkeys(("활성", "파일 없음", "다시 철회됨", "확인 불가", "대체 지정 없음"), 0)
+    orphan_count = 0
+    print(f"[LESSON] 철회 기록 {len(markers)}개")
+    for marker in markers:
+        original = marker.with_name(marker.name.removesuffix(suffix))
+        label = original.name if original.name.isprintable() else repr(original.name)
+        try:
+            source_exists = stat.S_ISREG(original.lstat().st_mode)
+        except FileNotFoundError:
+            source_exists = False
+        except OSError:
+            source_exists = None
+        if source_exists is False:
+            orphan_count += 1
+            print(f"- {label}: 원본 교훈 없음 또는 일반 파일 아님")
+        elif source_exists is None:
+            orphan_count += 1
+            print(f"- {label}: 원본 교훈 확인 불가")
+        try:
+            replacement = _read_retraction(marker).get("replacement")
+        except (OSError, ValueError, RecursionError):
+            status = "확인 불가"
+        else:
+            status = "대체 지정 없음" if replacement is None else _replacement_status(original, replacement)
+            if isinstance(replacement, str) and replacement.isprintable():
+                label += f" → {replacement}"
+        counts[status] += 1
+        print(f"- {label}: {status}")
+
+    print(" / ".join(f"{status} {count}" for status, count in counts.items()))
+    if orphan_count:
+        print(f"원본 교훈 확인 필요 {orphan_count}")
+    return int(bool(orphan_count or counts["파일 없음"] or counts["다시 철회됨"] or counts["확인 불가"]))
+
+
 def cmd_add(root: Path, args) -> int:
     """대화형 또는 인자로 교훈을 추가한다."""
     title = args.title or input("교훈 제목: ").strip()
@@ -468,6 +518,8 @@ def main() -> int:
     p_retract.add_argument("--reason", required=True)
     p_retract.add_argument("--replacement", help="현재 활성 상태인 대체 교훈의 정확한 파일명")
 
+    sub.add_parser("doctor", help="철회 기록의 대체 관계를 읽기 전용으로 일괄 점검")
+
     p_recent = sub.add_parser("recent", help="최근 교훈 요약 (context 주입용)")
     p_recent.add_argument("--n", type=int, default=5)
 
@@ -484,6 +536,8 @@ def main() -> int:
         return cmd_show(root, args.filename)
     if args.cmd == "retract":
         return cmd_retract(root, args.filename, args.reason, args.replacement)
+    if args.cmd == "doctor":
+        return cmd_doctor(root)
     if args.cmd == "recent":
         return cmd_recent(root, args.n)
     return 1

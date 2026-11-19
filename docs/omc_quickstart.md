@@ -64,6 +64,8 @@ Superpowers 계획을 재개하기 전에 `python3 scripts/omc.py state status -
 
 잘못된 교훈을 철회하려면 `python3 scripts/omc_lesson.py --target . retract OLD.md --reason "정책 변경" --replacement NEW.md`를 실행합니다. 대체 교훈은 이미 저장된 활성 교훈의 정확한 파일명이며, 아직 대체 교훈이 없다면 옵션을 생략할 수 있습니다. 철회 기록은 원문 옆에 별도로 남습니다. `show OLD.md`로 원문과 철회 이유를 볼 수 있습니다. 검색과 새 컨텍스트 추천에는 활성 교훈만 포함되며, 이전에 생성한 컨텍스트는 다시 생성해야 반영됩니다.
 
+여러 교훈의 대체 관계는 `python3 scripts/omc_lesson.py --target . doctor`로 점검합니다. 각 철회 기록의 직접 연결을 확인하고, 대체 교훈의 상태 및 원본 교훈이 빠진 기록을 표시합니다. 종료 코드 0은 확인할 문제 없음, 1은 확인이 필요한 기록 발견, 2는 교훈 디렉터리를 점검할 수 없음을 뜻합니다.
+
 ## 명시적 검증 & CI
 
 커밋 전 staged 변경의 TDD 게이트를 확인합니다.
