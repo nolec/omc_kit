@@ -103,6 +103,7 @@ def test_recommendations_identify_exact_lesson_in_all_outputs(tmp_path, monkeypa
     ]:
         (folder / name).write_text(f"# Same title\n## 적용된 규칙\n{rule}\n", encoding="utf-8")
     (folder / "2026-01-03-retired.md.retracted.json").write_text("{}")
+    (folder / "2026-01-04-broken.md").write_bytes(b"\xff")
     git_info = {"branch": query}
     monkeypatch.setattr(omc_context, "_collect_git_info", lambda root: git_info)
     summary = omc_context._collect_lessons(tmp_path, git_info, n=1)
@@ -113,6 +114,7 @@ def test_recommendations_identify_exact_lesson_in_all_outputs(tmp_path, monkeypa
     for output in (summary, console, cursor):
         assert f"파일: {expected}" in output
         assert "retired.md" not in output
+        assert "broken.md" not in output
     shown = subprocess.check_output([
         sys.executable, "-B", str(ROOT / "scripts/omc_lesson.py"),
         "--target", str(tmp_path), "show", expected

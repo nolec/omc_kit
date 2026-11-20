@@ -25,6 +25,7 @@ import tempfile
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import NamedTuple
 
 _LESSONS_DIR = ".omc/lessons"
 _TEMPLATE = """\
@@ -525,17 +526,29 @@ def search_relevant_with_source(
     root: Path, context_text: str, top_n: int = 3,
 ) -> list[tuple[str, str, str]]:
     """Return the same ranked lessons, including their exact filenames."""
-    lessons_dir = root / _LESSONS_DIR
-    if not lessons_dir.exists():
-        return []
+    _, lessons = recommend_lessons(root, context_text, top_n, fallback_to_recent=False)
+    return [(lesson.title, lesson.rule, lesson.filename) for lesson in lessons]
+
+
+class RecommendedLesson(NamedTuple):
+    title: str
+    rule: str
+    filename: str
+    tags_line: str
+
+
+def recommend_lessons(
+    root: Path, query: str, top_n: int, *, fallback_to_recent: bool = True,
+) -> tuple[bool, list[RecommendedLesson]]:
+    """Return whether BM25 matched, and summaries from the same readable documents."""
     docs = _searchable_lessons(root)
-    if not docs:
-        return []
-    scored = _bm25_scores(context_text, docs)
+    matches = [(path, content) for score, path, content in _bm25_scores(query, docs)[:top_n]
+               if score > 0]
+    selected = matches
+    if not matches and fallback_to_recent:
+        selected = docs[:top_n]
     results = []
-    for score, path, content in scored[:top_n]:
-        if score <= 0:
-            break
+    for path, content in selected:
         lines = content.splitlines()
         title = next((l.lstrip("# ").strip() for l in lines if l.startswith("# ")), path.stem)
         rule_idx = next((i for i, l in enumerate(lines) if l.startswith("## 적용된 규칙")), None)
@@ -544,8 +557,9 @@ def search_relevant_with_source(
             if rule_idx is not None and rule_idx + 1 < len(lines)
             else "(없음)"
         )
-        results.append((title, rule, path.name))
-    return results
+        tags = next((line for line in lines if line.startswith("태그:")), "")
+        results.append(RecommendedLesson(title, rule, path.name, tags))
+    return bool(matches), results
 
 
 # ---------------------------------------------------------------------------

@@ -15,7 +15,7 @@ omc_context.py — 세션 시작 시 프로젝트 컨텍스트 자동 수집 + �
 from __future__ import annotations
 import argparse, json, subprocess, sys
 
-from omc_lesson import active_lesson_files
+from omc_lesson import recommend_lessons
 from datetime import datetime
 from pathlib import Path
 
@@ -95,171 +95,56 @@ def _collect_wip(root) -> str:
         lines.append(f"\n실패한 접근:\n  {failed}")
     return "\n".join(lines)
 
+def _lesson_query(git_info: dict | None) -> str:
+    if not git_info:
+        return ""
+    return " ".join(filter(None, (git_info.get("branch"), git_info.get("commits"))))
+
+
 def _collect_lessons(root, git_info: dict | None = None, n: int = 5) -> str:
-    """BM25로 현재 컨텍스트와 관련된 교훈을 추천합니다.
-
-    git_info(브랜치명 + 최근 커밋)를 쿼리로 사용해 단순 최신순 대신
-    현재 작업과 의미적으로 유사한 교훈을 우선 표시합니다.
-    BM25 히트가 없으면 최신순 n개 fallback.
-    """
-    lessons_dir = root / ".omc" / "lessons"
-    if not lessons_dir.exists():
+    matched, lessons = recommend_lessons(root, _lesson_query(git_info), n)
+    if not lessons:
         return ""
-    files = active_lesson_files(root)
-    if not files:
-        return ""
-
-    # BM25 검색 시도 (omc_lesson.search_relevant 재사용)
-    try:
-        sys.path.insert(0, str(Path(__file__).resolve().parent))
-        import omc_lesson as _lesson_mod
-
-        context_query = ""
-        if git_info:
-            context_query = " ".join(filter(None, [
-                git_info.get("branch", ""),
-                git_info.get("commits", ""),
-            ]))
-
-        if context_query.strip():
-            relevant = _lesson_mod.search_relevant_with_source(root, context_query, top_n=n)
-            if relevant:
-                parts = ["## 관련 교훈 (BM25 — 현재 작업 기준)"]
-                for title, rule, filename in relevant:
-                    parts.append(f"\n### {title}")
-                    parts.append(f"규칙: {rule}")
-                    parts.append(f"파일: {filename}")
-                return "\n".join(parts)
-    except Exception:
-        pass
-
-    # Fallback: 최신순 n개
-    parts = [f"## 최근 교훈 (최대 {n}개)"]
-    for f in files[:n]:
-        lines = f.read_text(encoding="utf-8").splitlines()
-        title = next((l.lstrip("# ").strip() for l in lines if l.startswith("# ")), f.stem)
-        rule_idx = next((i for i, l in enumerate(lines) if l.startswith("## 적용된 규칙")), None)
-        rule = lines[rule_idx + 1].strip() if rule_idx is not None and rule_idx + 1 < len(lines) else "(없음)"
-        tags_line = next((l for l in lines if l.startswith("태그:")), "")
-        parts.append(f"\n### {title}")
-        if tags_line:
-            parts.append(tags_line)
-        parts.append(f"규칙: {rule}")
-        parts.append(f"파일: {f.name}")
+    heading = "## 관련 교훈 (BM25 — 현재 작업 기준)" if matched else f"## 최근 교훈 (최대 {n}개)"
+    parts = [heading]
+    for lesson in lessons:
+        parts.append(f"\n### {lesson.title}")
+        if not matched and lesson.tags_line:
+            parts.append(lesson.tags_line)
+        parts.extend([f"규칙: {lesson.rule}", f"파일: {lesson.filename}"])
     return "\n".join(parts)
 
 
-def write_lessons_inject(root: Path, top_n: int = 3) -> None:
-    """BM25 top_n 교훈을 .cursor/rules/omc-lessons-inject.mdc 에 기록합니다.
-
-    Cursor는 .cursor/rules/ 파일을 자동으로 컨텍스트에 포함하므로
-    이 파일을 통해 교훈이 실질적으로 주입됩니다.
-    교훈이 0개이면 파일을 생성하지 않습니다.
-    """
-    lessons_dir = root / ".omc" / "lessons"
-    out_path = (root / ".cursor" / "rules" / "omc-lessons-inject.mdc")
-    if not lessons_dir.exists():
-        out_path.unlink(missing_ok=True)
-        return
-    files = active_lesson_files(root)
-    if not files:
-        out_path.unlink(missing_ok=True)
-        return
-
-    # BM25 또는 최신순 top_n 수집
-    try:
-        sys.path.insert(0, str(Path(__file__).resolve().parent))
-        import omc_lesson as _lesson_mod
+def write_lessons_inject(root: Path, top_n: int = 3, git_info: dict | None = None) -> None:
+    out_path = root / ".cursor/rules/omc-lessons-inject.mdc"
+    if git_info is None and (root / ".omc/lessons").is_dir():
         git_info = _collect_git_info(root)
-        context_query = " ".join(filter(None, [
-            git_info.get("branch", ""),
-            git_info.get("commits", ""),
-        ]))
-        if context_query.strip():
-            relevant = _lesson_mod.search_relevant_with_source(root, context_query, top_n=top_n)
-        else:
-            relevant = []
-    except Exception:
-        relevant = []
+    matched, lessons = recommend_lessons(root, _lesson_query(git_info), top_n)
+    if not lessons:
+        out_path.unlink(missing_ok=True)
+        return
 
-    parts = ["# OMC 자동 주입 교훈 (BM25 top-{})".format(top_n), ""]
-    parts.append("> 이 파일은 세션 시작 시 자동 생성됩니다. 직접 수정하지 마세요.")
-    parts.append("")
-
-    if relevant:
-        for title, rule, filename in relevant:
-            parts.append(f"## {title}")
-            parts.append(f"- {rule}")
-            parts.append(f"파일: {filename}")
-            parts.append("")
-    else:
-        # BM25 히트 없으면 최신순 top_n
-        for f in files[:top_n]:
-            lines = f.read_text(encoding="utf-8").splitlines()
-            title = next((l.lstrip("# ").strip() for l in lines if l.startswith("# ")), f.stem)
-            rule_idx = next((i for i, l in enumerate(lines) if l.startswith("## 적용된 규칙")), None)
-            rule = lines[rule_idx + 1].strip() if rule_idx is not None and rule_idx + 1 < len(lines) else "(없음)"
-            parts.append(f"## {title}")
-            parts.append(f"- {rule}")
-            parts.append(f"파일: {f.name}")
-            parts.append("")
-
-    rules_dir = root / ".cursor" / "rules"
-    rules_dir.mkdir(parents=True, exist_ok=True)
-    out_path = rules_dir / "omc-lessons-inject.mdc"
+    order = "BM25" if matched else "최신순"
+    parts = [f"# OMC 자동 주입 교훈 ({order} top-{top_n})", "",
+             "> 이 파일은 세션 시작 시 자동 생성됩니다. 직접 수정하지 마세요.", ""]
+    for lesson in lessons:
+        parts.extend([f"## {lesson.title}", f"- {lesson.rule}", f"파일: {lesson.filename}", ""])
+    out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text("\n".join(parts), encoding="utf-8")
 
+
 def _print_lessons_to_console(root: Path, git_info: dict | None = None, n: int = 3) -> None:
-    """세션 시작 시 관련 교훈을 터미널에 직접 출력합니다.
-
-    BM25 히트가 있으면 현재 작업과 관련된 교훈을,
-    없으면 최신 n개를 fallback으로 출력합니다.
-    교훈이 없으면 아무것도 출력하지 않습니다.
-    """
-    lessons_dir = root / ".omc" / "lessons"
-    if not lessons_dir.exists():
+    _, lessons = recommend_lessons(root, _lesson_query(git_info), n)
+    if not lessons:
         return
-    files = active_lesson_files(root)
-    if not files:
-        return
-
-    entries: list[tuple[str, str, str]] = []  # (title, rule, filename)
-
-    # BM25 검색 시도
-    try:
-        import omc_lesson as _lesson_mod
-
-        context_query = ""
-        if git_info:
-            context_query = " ".join(filter(None, [
-                git_info.get("branch", ""),
-                git_info.get("commits", ""),
-            ]))
-
-        if context_query.strip():
-            relevant = _lesson_mod.search_relevant_with_source(root, context_query, top_n=n)
-            if relevant:
-                entries = relevant
-    except Exception:
-        pass
-
-    # Fallback: 최신순
-    if not entries:
-        for f in files[:n]:
-            lines = f.read_text(encoding="utf-8").splitlines()
-            title = next((l.lstrip("# ").strip() for l in lines if l.startswith("# ")), f.stem)
-            rule_idx = next((i for i, l in enumerate(lines) if l.startswith("## 적용된 규칙")), None)
-            rule = lines[rule_idx + 1].strip() if rule_idx is not None and rule_idx + 1 < len(lines) else "(없음)"
-            entries.append((title, rule, f.name))
-
-    count = len(entries)
-    print(f"[CONTEXT] 💡 관련 교훈 {count}개")
-    for title, rule, filename in entries:
-        print(f"          ▸ {title}")
-        print(f"            파일: {filename}")
-        if rule and rule != "(없음)":
-            rule_preview = rule[:80] + ("…" if len(rule) > 80 else "")
+    print(f"[CONTEXT] 💡 관련 교훈 {len(lessons)}개")
+    for lesson in lessons:
+        print(f"          ▸ {lesson.title}")
+        print(f"            파일: {lesson.filename}")
+        if lesson.rule and lesson.rule != "(없음)":
+            rule_preview = lesson.rule[:80] + ("…" if len(lesson.rule) > 80 else "")
             print(f"            규칙: {rule_preview}")
+
 
 _INDEX_LIMIT = 300
 _MAX_FILE_BYTES = 500 * 1024
@@ -437,7 +322,7 @@ def main():
 
     # ── 관련 교훈 콘솔 출력 ──────────────────────────────────────────────────────
     _print_lessons_to_console(root, git_info=g)
-    write_lessons_inject(root, top_n=3)
+    write_lessons_inject(root, top_n=3, git_info=g)
 
     # Lifecycle is owned by omc_hooks.session_start. Generating context must not
     # clear a CONTRACT a second time, including an explicitly preserved handoff.
