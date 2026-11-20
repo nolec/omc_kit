@@ -166,6 +166,54 @@ def test_doctor_treats_missing_lessons_directory_as_empty(tmp_path):
     assert list(tmp_path.iterdir()) == []
 
 
+def test_doctor_reports_unreadable_lesson_bodies_without_writes(tmp_path):
+    folder = tmp_path / ".omc/lessons"
+    folder.mkdir(parents=True)
+    unreadable = folder / "invalid.md"
+    unreadable.write_bytes(b"\xff")
+    (folder / "directory.md").mkdir()
+    (folder / "healthy.md").write_text("# Healthy\n")
+    before = unreadable.read_bytes(), unreadable.stat().st_mtime_ns
+    command = [sys.executable, "-B", omc_lesson.__file__, "--target", str(tmp_path), "doctor"]
+
+    result = subprocess.run(command, capture_output=True, text=True, timeout=10)
+    assert result.returncode == 1, result.stdout
+    assert "invalid.md: 교훈 본문 읽기 실패" in result.stdout
+    assert "directory.md: 교훈 본문 읽기 실패" in result.stdout
+    assert "healthy.md" not in result.stdout
+    assert (unreadable.read_bytes(), unreadable.stat().st_mtime_ns) == before
+
+    filtered = subprocess.run(command + ["--replacement", "healthy.md"],
+                              capture_output=True, text=True, timeout=10)
+    assert filtered.returncode == 0
+    assert "일치 기록 0개" in filtered.stdout
+    assert "invalid.md" not in filtered.stdout
+
+
+def test_lesson_search_skips_unreadable_bodies_and_keeps_bm25_results(tmp_path):
+    folder = tmp_path / ".omc/lessons"
+    folder.mkdir(parents=True)
+    (folder / "healthy.md").write_text("# Invoice delivery\n## 적용된 규칙\nCheck invoice.\n")
+    (folder / "withdrawn.md").write_text("# Old invoice rule\n")
+    assert omc_lesson.cmd_retract(tmp_path, "withdrawn.md", "outdated", None) == 0
+    (folder / "invalid.md").write_bytes(b"# Invalid invoice rule\n\xff")
+    (folder / "directory.md").mkdir()
+    (folder / "linked.md").symlink_to("healthy.md")
+
+    command = [sys.executable, "-B", omc_lesson.__file__, "--target", str(tmp_path), "search", "invoice"]
+    result = subprocess.run(command, capture_output=True, text=True, timeout=10)
+    assert result.returncode == 0, result.stderr
+    assert "BM25 검색 결과 1개" in result.stdout
+    assert "파일: healthy.md" in result.stdout
+    assert omc_lesson.search_relevant_with_source(tmp_path, "invoice") == [
+        ("Invoice delivery", "Check invoice.", "healthy.md"),
+    ]
+    (folder / "healthy.md").unlink()
+    empty = subprocess.run(command, capture_output=True, text=True, timeout=10)
+    assert empty.returncode == 0
+    assert "검색 가능한 교훈 없음" in empty.stdout
+
+
 def test_doctor_reports_orphan_and_refuses_symlink_directory(tmp_path, capsys):
     folder = tmp_path / ".omc/lessons"
     folder.mkdir(parents=True)

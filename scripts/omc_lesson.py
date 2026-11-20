@@ -148,6 +148,28 @@ def active_lesson_files(root: Path) -> list[Path]:
             if not os.path.lexists(_retraction(path))]
 
 
+def _read_lesson_body(path: Path) -> str | None:
+    def open_lesson(name: str, flags: int) -> int:
+        return os.open(name, flags | os.O_NOFOLLOW | os.O_NONBLOCK)
+
+    try:
+        with open(path, encoding="utf-8", opener=open_lesson) as stream:
+            if stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+                return stream.read()
+    except (OSError, UnicodeError):
+        pass
+    return None
+
+
+def _searchable_lessons(root: Path) -> list[tuple[Path, str]]:
+    docs = []
+    for path in active_lesson_files(root):
+        content = _read_lesson_body(path)
+        if content is not None:
+            docs.append((path, content))
+    return docs
+
+
 def cmd_retract(root: Path, filename: str, reason: str, replacement: str | None) -> int:
     folder = root / _LESSONS_DIR
 
@@ -240,7 +262,7 @@ def _show_retraction(path: Path) -> None:
 
 
 def cmd_doctor(root: Path, replacement_filter: str | None = None) -> int:
-    """Report direct replacement links using the same checks as show."""
+    """Check lesson bodies and direct replacement links."""
     if replacement_filter is not None and not _is_lesson_filename(replacement_filter):
         print("[LESSON] --replacement에는 경로 없이 정확한 .md 파일명을 지정하세요.", file=sys.stderr)
         return 2
@@ -251,13 +273,22 @@ def cmd_doctor(root: Path, replacement_filter: str | None = None) -> int:
         if folder.resolve() != folder:
             raise ValueError("심볼릭 링크 교훈 경로는 사용할 수 없습니다.")
         try:
-            markers = sorted(p for p in folder.iterdir() if p.name.endswith(".md" + suffix))
+            entries = sorted(folder.iterdir())
         except FileNotFoundError:
-            markers = []
+            entries = []
     except (OSError, RuntimeError, ValueError) as error:
         print(f"[LESSON] 진단 불가: {error}", file=sys.stderr)
         return 2
 
+    body_failure_count = 0
+    if replacement_filter is None:
+        for path in entries:
+            if path.suffix == ".md" and _read_lesson_body(path) is None:
+                label = path.name if path.name.isprintable() else repr(path.name)
+                print(f"- {label}: 교훈 본문 읽기 실패")
+                body_failure_count += 1
+
+    markers = [path for path in entries if path.name.endswith(".md" + suffix)]
     counts = dict.fromkeys(("활성", "파일 없음", "다시 철회됨", "확인 불가", "대체 지정 없음"), 0)
     orphan_count = 0
     unreadable_count = 0
@@ -302,7 +333,7 @@ def cmd_doctor(root: Path, replacement_filter: str | None = None) -> int:
     print(" / ".join(f"{status} {count}" for status, count in counts.items()))
     if orphan_count:
         print(f"원본 교훈 확인 필요 {orphan_count}")
-    return int(bool(unreadable_count or orphan_count or counts["파일 없음"]
+    return int(bool(body_failure_count or unreadable_count or orphan_count or counts["파일 없음"]
                     or counts["다시 철회됨"] or counts["확인 불가"]))
 
 
@@ -396,12 +427,11 @@ def cmd_search(root: Path, query: str, top_n: int = 5) -> int:
         print("[LESSON] 교훈 없음")
         return 0
 
-    files = active_lesson_files(root)
-    if not files:
-        print("[LESSON] 교훈 없음")
+    docs = _searchable_lessons(root)
+    if not docs:
+        print("[LESSON] 검색 가능한 교훈 없음")
         return 0
 
-    docs = [(f, f.read_text(encoding="utf-8")) for f in files]
     scored = _bm25_scores(query, docs)
     q_tokens = _tokenize(query)
 
@@ -498,10 +528,7 @@ def search_relevant_with_source(
     lessons_dir = root / _LESSONS_DIR
     if not lessons_dir.exists():
         return []
-    docs = [
-        (f, f.read_text(encoding="utf-8"))
-        for f in active_lesson_files(root)
-    ]
+    docs = _searchable_lessons(root)
     if not docs:
         return []
     scored = _bm25_scores(context_text, docs)
@@ -554,7 +581,7 @@ def main() -> int:
     p_retract.add_argument("--reason", required=True)
     p_retract.add_argument("--replacement", help="현재 활성 상태인 대체 교훈의 정확한 파일명")
 
-    p_doctor = sub.add_parser("doctor", help="철회 기록의 대체 관계를 읽기 전용으로 일괄 점검")
+    p_doctor = sub.add_parser("doctor", help="교훈 본문과 철회 기록의 대체 관계를 읽기 전용으로 점검")
     p_doctor.add_argument("--replacement", help="직접 참조를 조회할 대체 교훈의 정확한 .md 파일명")
 
     p_recent = sub.add_parser("recent", help="최근 교훈 요약 (context 주입용)")
