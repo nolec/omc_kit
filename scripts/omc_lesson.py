@@ -194,10 +194,13 @@ def _read_retraction(marker: Path) -> dict:
     return record
 
 
+def _is_lesson_filename(filename: object) -> bool:
+    return (isinstance(filename, str) and "\x00" not in filename
+            and Path(filename).name == filename and Path(filename).suffix == ".md")
+
+
 def _replacement_status(original: Path, filename: object) -> str:
-    if (not isinstance(filename, str) or "\x00" in filename
-            or Path(filename).name != filename or Path(filename).suffix != ".md"
-            or filename == original.name):
+    if not _is_lesson_filename(filename) or filename == original.name:
         return "확인 불가"
     target = original.with_name(filename)
     try:
@@ -236,8 +239,12 @@ def _show_retraction(path: Path) -> None:
         print("철회 기록 읽기 실패")
 
 
-def cmd_doctor(root: Path) -> int:
+def cmd_doctor(root: Path, replacement_filter: str | None = None) -> int:
     """Report direct replacement links using the same checks as show."""
+    if replacement_filter is not None and not _is_lesson_filename(replacement_filter):
+        print("[LESSON] --replacement에는 경로 없이 정확한 .md 파일명을 지정하세요.", file=sys.stderr)
+        return 2
+
     folder = root / _LESSONS_DIR
     suffix = ".retracted.json"
     try:
@@ -253,10 +260,24 @@ def cmd_doctor(root: Path) -> int:
 
     counts = dict.fromkeys(("활성", "파일 없음", "다시 철회됨", "확인 불가", "대체 지정 없음"), 0)
     orphan_count = 0
+    unreadable_count = 0
     print(f"[LESSON] 철회 기록 {len(markers)}개")
     for marker in markers:
         original = marker.with_name(marker.name.removesuffix(suffix))
         label = original.name if original.name.isprintable() else repr(original.name)
+        try:
+            replacement = _read_retraction(marker).get("replacement")
+        except (OSError, ValueError, RecursionError):
+            replacement = None
+            status = "확인 불가"
+            if replacement_filter is not None:
+                unreadable_count += 1
+                print(f"- {label}: 철회 기록 읽기 실패")
+                continue
+        else:
+            if replacement_filter is not None and replacement != replacement_filter:
+                continue
+            status = "대체 지정 없음" if replacement is None else _replacement_status(original, replacement)
         try:
             source_exists = stat.S_ISREG(original.lstat().st_mode)
         except FileNotFoundError:
@@ -269,21 +290,20 @@ def cmd_doctor(root: Path) -> int:
         elif source_exists is None:
             orphan_count += 1
             print(f"- {label}: 원본 교훈 확인 불가")
-        try:
-            replacement = _read_retraction(marker).get("replacement")
-        except (OSError, ValueError, RecursionError):
-            status = "확인 불가"
-        else:
-            status = "대체 지정 없음" if replacement is None else _replacement_status(original, replacement)
-            if isinstance(replacement, str) and replacement.isprintable():
-                label += f" → {replacement}"
+        if isinstance(replacement, str) and replacement.isprintable():
+            label += f" → {replacement}"
         counts[status] += 1
         print(f"- {label}: {status}")
 
+    if replacement_filter is not None:
+        print(f"일치 기록 {sum(counts.values())}개")
+    if unreadable_count:
+        print(f"조회 불완전: 철회 기록 {unreadable_count}개의 일치 여부를 확인할 수 없음")
     print(" / ".join(f"{status} {count}" for status, count in counts.items()))
     if orphan_count:
         print(f"원본 교훈 확인 필요 {orphan_count}")
-    return int(bool(orphan_count or counts["파일 없음"] or counts["다시 철회됨"] or counts["확인 불가"]))
+    return int(bool(unreadable_count or orphan_count or counts["파일 없음"]
+                    or counts["다시 철회됨"] or counts["확인 불가"]))
 
 
 def cmd_add(root: Path, args) -> int:
@@ -525,7 +545,8 @@ def main() -> int:
     p_retract.add_argument("--reason", required=True)
     p_retract.add_argument("--replacement", help="현재 활성 상태인 대체 교훈의 정확한 파일명")
 
-    sub.add_parser("doctor", help="철회 기록의 대체 관계를 읽기 전용으로 일괄 점검")
+    p_doctor = sub.add_parser("doctor", help="철회 기록의 대체 관계를 읽기 전용으로 일괄 점검")
+    p_doctor.add_argument("--replacement", help="직접 참조를 조회할 대체 교훈의 정확한 .md 파일명")
 
     p_recent = sub.add_parser("recent", help="최근 교훈 요약 (context 주입용)")
     p_recent.add_argument("--n", type=int, default=5)
@@ -544,7 +565,7 @@ def main() -> int:
     if args.cmd == "retract":
         return cmd_retract(root, args.filename, args.reason, args.replacement)
     if args.cmd == "doctor":
-        return cmd_doctor(root)
+        return cmd_doctor(root, args.replacement)
     if args.cmd == "recent":
         return cmd_recent(root, args.n)
     return 1

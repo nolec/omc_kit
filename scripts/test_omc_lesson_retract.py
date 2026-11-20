@@ -137,3 +137,51 @@ def test_doctor_reports_orphan_and_refuses_symlink_directory(tmp_path, capsys):
     assert omc_lesson.cmd_doctor(tmp_path) == 2
     assert "진단 불가" in capsys.readouterr().err
     assert (elsewhere / marker.name).read_text() == '{"reason":"old","replacement":null}'
+
+
+def test_doctor_filters_exact_replacement_and_reports_incomplete_results(tmp_path):
+    folder = tmp_path / ".omc/lessons"
+    folder.mkdir(parents=True)
+    for name in ("old-a", "old-b", "unrelated", "current", "other-current"):
+        (folder / f"{name}.md").write_text(f"# {name}\n")
+    for source, target in (("old-a", "current"), ("old-b", "current"),
+                           ("unrelated", "other-current")):
+        assert omc_lesson.cmd_retract(tmp_path, source + ".md", "old", target + ".md") == 0
+    command = [sys.executable, "-B", omc_lesson.__file__, "--target", str(tmp_path),
+               "doctor", "--replacement"]
+
+    def snapshot():
+        return {p: (p.lstat().st_mtime_ns, p.readlink() if p.is_symlink() else p.read_bytes())
+                for p in folder.iterdir()}
+
+    def query(filename):
+        before = snapshot()
+        result = subprocess.run(command + [filename], capture_output=True, text=True)
+        assert snapshot() == before
+        return result
+
+    active = query("current.md")
+    assert active.returncode == 0
+    assert "old-a.md → current.md: 활성" in active.stdout
+
+    (folder / "current.md").unlink()
+    result = query("current.md")
+    assert result.returncode == 1, result.stderr
+    assert "일치 기록 2개" in result.stdout
+    assert "old-a.md → current.md: 파일 없음" in result.stdout
+    assert "old-b.md → current.md: 파일 없음" in result.stdout
+    assert "unrelated.md" not in result.stdout
+    assert query("../current.md").returncode == 2
+    empty = query("unused.md")
+    assert empty.returncode == 0 and "일치 기록 0개" in empty.stdout
+
+    (folder / "broken.md.retracted.json").write_text("{broken")
+    (folder / "linked.md.retracted.json").symlink_to("unrelated.md.retracted.json")
+    partial = query("current.md")
+    assert partial.returncode == 1 and "일치 기록 2개" in partial.stdout
+    assert "broken.md: 철회 기록 읽기 실패" in partial.stdout
+    assert "linked.md: 철회 기록 읽기 실패" in partial.stdout
+    assert "조회 불완전: 철회 기록 2개" in partial.stdout
+    no_known_matches = query("unused.md")
+    assert no_known_matches.returncode == 1
+    assert "일치 기록 0개" in no_known_matches.stdout and "조회 불완전" in no_known_matches.stdout

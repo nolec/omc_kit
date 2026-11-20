@@ -64,7 +64,11 @@ Superpowers 계획을 재개하기 전에 `python3 scripts/omc.py state status -
 
 잘못된 교훈을 철회하려면 `python3 scripts/omc_lesson.py --target . retract OLD.md --reason "정책 변경" --replacement NEW.md`를 실행합니다. 대체 교훈은 이미 저장된 활성 교훈의 정확한 파일명이며, 아직 대체 교훈이 없다면 옵션을 생략할 수 있습니다. 철회 기록은 원문 옆에 별도로 남습니다. `show OLD.md`로 원문과 철회 이유를 볼 수 있습니다. 검색과 새 컨텍스트 추천에는 활성 교훈만 포함되며, 이전에 생성한 컨텍스트는 다시 생성해야 반영됩니다.
 
-여러 교훈의 대체 관계는 `python3 scripts/omc_lesson.py --target . doctor`로 점검합니다. 각 철회 기록의 직접 연결을 확인하고, 대체 교훈의 상태 및 원본 교훈이 빠진 기록을 표시합니다. 종료 코드 0은 확인할 문제 없음, 1은 확인이 필요한 기록 발견, 2는 교훈 디렉터리를 점검할 수 없음을 뜻합니다.
+여러 교훈의 대체 관계는 `python3 scripts/omc_lesson.py --target . doctor`로 점검합니다. 각 철회 기록의 직접 연결을 확인하고, 대체 교훈의 상태 및 원본 교훈이 빠진 기록을 표시합니다.
+
+`python3 scripts/omc_lesson.py --target . doctor --replacement current.md`는 `current.md`를 직접 가리키는 철회 기록을 조회합니다. 정확한 `.md` 파일명을 지정하면 대상 파일이 삭제된 뒤에도 참조를 찾을 수 있습니다. 읽을 수 없는 철회 기록이 있으면 확인된 일치 수와 함께 `조회 불완전`을 표시합니다.
+
+종료 코드 `0`은 확인할 문제 없음, `1`은 확인이 필요한 기록이 있거나 조회가 불완전함, `2`는 잘못된 파일명 또는 교훈 디렉터리 점검 불가를 뜻합니다.
 
 ## 명시적 검증 & CI
 
