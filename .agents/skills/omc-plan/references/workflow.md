@@ -7,7 +7,7 @@ Codex는 원본의 state init/session_start/sync-require보다 먼저 진입을 
 이어가기는 `--intent continue`와 같은 ticket·SHA·`--workspace <경로> --work-id <ID>`를 명시합니다. 실패하면 원본 초기화나 새 작업으로 fallback하지 않습니다.
 상태·설계 요청은 `--intent read`이며 작업 공간과 세션을 만들지 않습니다. 본문의 기존 세션 동기화는 원본에서 실행하지 않고, 구현 인계 후 명시된 작업 공간에서만 수행합니다.
 `WORKSPACE_READY`는 공간 준비에 한정됩니다. 일반 채팅 파일 도구의 원본 쓰기 차단이나 설치·검증 실행을 입증하지 않습니다.
-새 CONTRACT 뒤 승인된 테스트 경로를 작성하고 실제 실패·RED 등록 뒤 구현합니다. 새 테스트 파일에 RED를 선행 요구하지 않습니다. 기존 승인·RED는 복사하지 않습니다.
+해당 Tier에서 CONTRACT를 요구하면 새 CONTRACT를 등록합니다. RED가 필요한 작업은 승인된 경로에 테스트를 작성하고 실제 실패·RED 등록 뒤 구현합니다. 새 테스트 파일에 RED를 선행 요구하지 않습니다. 기존 승인·RED는 복사하지 않습니다.
 
 
 ## Phase 0
@@ -16,7 +16,7 @@ Codex는 원본의 state init/session_start/sync-require보다 먼저 진입을 
 ```bash
 python3 scripts/omc.py state sync-session --target . --mode autopilot --title "omc-plan" --request "<현재 작업 한 줄 요약>" --roles analysis
 ```
-AGENTS.md Tier 1 → CONTRACT 입력.
+저장소 루트의 `docs/omc_explicit_workflow.md`에서 명시적 OMC 작업의 Tier 1 조건을 읽고 CONTRACT를 준비한다.
 
 ## Phase 1. CONTRACT
 목표/범위 (포함)/범위 (제외)/DoD/제약/사용자 컨펌. 사용자에게 보여줄 단계. 시스템이 암묵적으로 처리. 정상 최종 출력은 결정 → 범위 → 태스크 → 승인 요청 순서이며 첫 3줄 안에 결론, 20줄 이하, 같은 사실 반복 0회, 다음 행동은 정확히 1개로 쓴다. Machine output contract 두 줄은 줄 수·중복·다음 행동 측정에서 제외한다. 미해결 결정이 있으면 길이보다 decisions_required를 우선한다. 내부 상태인 `사용자 선택 대기` 직접 노출 금지; 화면에는 결정할 실제 범위·정보·승인을 요청한다.

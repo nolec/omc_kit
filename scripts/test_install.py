@@ -94,6 +94,111 @@ class TestSkillTemplateSsot(unittest.TestCase):
             self.assertEqual(compatibility_files, {})
             self.assertFalse((target / ".agent").exists())
 
+    def test_installed_omc_workflow_requires_explicit_selection(self):
+        root = Path(__file__).resolve().parent.parent
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "target"
+            target.mkdir()
+            result = subprocess.run(
+                [sys.executable, str(root / "scripts/install.py"), "--target", str(target)],
+                cwd=root, capture_output=True, text=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            agents = (target / "AGENTS.md").read_text(encoding="utf-8")
+            self.assertIn("명시적으로 선택한 OMC 작업", agents)
+            self.assertIn("읽기 전용 조회나 QA 목록 작성만으로 OMC 구현 흐름에 진입하지 않는다", agents)
+            self.assertIn("기존 OMC 작업은 기존 작업 ID로 이어간다", agents)
+            self.assertNotIn("Tier 1 구현 요청은 자동으로 파이프라인에 진입", agents)
+            self.assertNotIn("자연어 키워드로도 자동 트리거", agents)
+            codex = (target / "CODEX.md").read_text(encoding="utf-8")
+            self.assertIn("사용자가 OMC 구현 흐름을 명시적으로 선택한 경우", codex)
+            self.assertNotIn("자연어 키워드로 자동 트리거", codex)
+            selection_cases = (
+                ("omc-plan", ("계획해줘", "설계해줘", "태스크 나눠줘")),
+                ("omc-task", ("구현해줘", "만들어줘", "코딩해줘")),
+                ("omc-investigate", ("버그 잡아줘", "디버그해줘", "왜 실패해")),
+                ("omc-review", ("코드 변경사항·diff·PR 리뷰", "코드 리뷰해줘")),
+            )
+            for skill, generic_requests in selection_cases:
+                path = Path(".agents/skills") / skill / "SKILL.md"
+                installed = (target / path).read_text(encoding="utf-8")
+                description = next(line for line in installed.splitlines() if line.startswith("description:"))
+                self.assertIn(f"${skill}", description)
+                self.assertIn("명시적", description)
+                for generic_request in generic_requests:
+                    self.assertNotIn(generic_request, description)
+                self.assertEqual(installed, (root / path).read_text(encoding="utf-8"))
+
+    def test_installed_omc_agents_is_lean_and_links_workflow_reference(self):
+        root = Path(__file__).resolve().parent.parent
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp)
+            agents = target / "AGENTS.md"
+            prefix = "# 사용자 지침\n" + "- 사용자 규칙\n" * 91 + "\n"
+            suffix = "\n# 사용자 후속 지침\n"
+            agents.write_text(prefix, encoding="utf-8")
+            for attempt in range(2):
+                if attempt:
+                    with agents.open("a", encoding="utf-8") as stream:
+                        stream.write(suffix)
+                result = subprocess.run(
+                    [sys.executable, str(root / "scripts/install.py"), "--target", str(target)],
+                    cwd=root, capture_output=True, text=True,
+                )
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                text = agents.read_text(encoding="utf-8")
+                managed = _install._extract_agents_omc_block(text)
+                self.assertLessEqual(len(managed.splitlines()), 90)
+                self.assertTrue(text.startswith(prefix))
+                if attempt:
+                    self.assertTrue(text.endswith(suffix.lstrip("\n")))
+                self.assertIn("OMC_CODEX_READ_ONLY_BOOTSTRAP", managed)
+                self.assertIn("일반 계획·구현·수정·리뷰는 Superpowers", managed)
+                self.assertIn("명시적으로 선택한 OMC 작업", managed)
+                self.assertIn("docs/omc_explicit_workflow.md", managed)
+                self.assertIn("### OMC Tier 1", managed)
+                self.assertIn("신규 구현 파일은 승인된 CONTRACT와 실제 RED가 필요합니다", managed)
+                self.assertNotIn("PHASE 1 ▸ CONTRACT", managed)
+                self.assertNotIn("역할 자동 추천", managed)
+                workflow = Path("docs/omc_explicit_workflow.md")
+                self.assertEqual((target / workflow).read_bytes(), (root / workflow).read_bytes())
+                for entry in (
+                    ".agents/skills/omc-plan/references/workflow.md",
+                    ".agents/skills/omc-task/SKILL.md",
+                ):
+                    skill_text = (target / entry).read_text(encoding="utf-8")
+                    self.assertIn(str(workflow), skill_text)
+                    self.assertIn("RED가 필요한 작업은", skill_text)
+
+    def test_lean_agents_upgrade_preserves_legacy_workflow_and_installs_new_reference(self):
+        root = Path(__file__).resolve().parent.parent
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp)
+            agents = target / "AGENTS.md"
+            agents.write_text(
+                "# 사용자 지침\n\n<!-- OMC:BEGIN -->\n기존 OMC 지침\n<!-- OMC:END -->\n",
+                encoding="utf-8",
+            )
+            old_ref = target / ".agents/skills/omc-plan/references/workflow.md"
+            old_ref.parent.mkdir(parents=True)
+            before = "AGENTS.md Tier 1 → CONTRACT 입력.\n"
+            old_ref.write_text(before, encoding="utf-8")
+            legacy = Path("docs/omc_workflow.md")
+            previous_workflow = (root / legacy).read_bytes()
+            (target / legacy).parent.mkdir()
+            (target / legacy).write_bytes(previous_workflow)
+            result = subprocess.run(
+                [sys.executable, str(root / "scripts/install.py"), "--target", str(target)],
+                cwd=root, capture_output=True, text=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertEqual(old_ref.read_text(encoding="utf-8"), before)
+            self.assertIn("### OMC Tier 1", agents.read_text(encoding="utf-8"))
+            self.assertEqual((target / legacy).read_bytes(), previous_workflow)
+            reference = Path("docs/omc_explicit_workflow.md")
+            self.assertIn(str(reference), agents.read_text(encoding="utf-8"))
+            self.assertEqual((target / reference).read_bytes(), (root / reference).read_bytes())
+
     def test_second_non_force_install_keeps_generated_receipt_auditable(self):
         root = Path(__file__).parent.parent
         installer = root / "scripts" / "install.py"
@@ -1238,6 +1343,7 @@ class TestRepositoryGitignore(unittest.TestCase):
                 (kit / "prompts" / name).write_text("x\n", encoding="utf-8")
             (kit / "docs").mkdir(parents=True)
             for name in [
+                "omc_explicit_workflow.md",
                 "omc_workflow.md",
                 "quickstart_kr.md",
                 "kit_map.md",

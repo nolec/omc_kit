@@ -25,7 +25,7 @@ REQUIRED_CLAUDE_QA_COMMAND_PATHS = [
     ROOT / ".claude" / "commands" / "qa.md",
     ROOT / "templates" / ".claude" / "commands" / "qa.md",
 ]
-STANDARD_CORE_SEQUENCE_AGENTS = "/plan      →    /task      →    /review    →    /ship"
+STANDARD_CORE_SEQUENCE = "$omc-plan → $omc-task → $omc-review → $omc-ship"
 STANDARD_CORE_SEQUENCE_OVERLAY = "/plan` → `/task` → `/review` → `/ship"
 
 REQUIRED_SEQUENCE = [
@@ -163,7 +163,7 @@ def test_ignored_live_agent_qa_path_is_optional(tmp_path: Path):
 
 
 def test_qa_is_not_reclassified_into_standard_core_pipeline():
-    assert STANDARD_CORE_SEQUENCE_AGENTS in _read(ROOT / "templates/AGENTS.md")
+    assert STANDARD_CORE_SEQUENCE in _read(ROOT / "docs/omc_explicit_workflow.md")
 
 
 def test_qa_skill_stays_short_enough_to_scan():

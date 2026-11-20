@@ -28,10 +28,14 @@ def test_orchestration_usage_doc_exists_with_required_sections() -> None:
 
 
 
-def test_agents_template_references_orchestration_usage_doc() -> None:
-    text = AGENTS_TEMPLATE.read_text(encoding="utf-8")
-    for marker in ["오케스트레이션 사용 원칙", "docs/orchestration_usage.md", "Codex"]:
-        assert marker in text
+def test_agents_template_points_to_installed_workflow_for_explicit_orchestration() -> None:
+    agents = AGENTS_TEMPLATE.read_text(encoding="utf-8")
+    workflow = (ROOT / "docs/omc_explicit_workflow.md").read_text(encoding="utf-8")
+    assert "OMC 오케스트레이션을 명시적으로 요청했다면" in agents
+    assert "docs/omc_explicit_workflow.md#명시적으로-선택한-omc-작업" in agents
+    explicit_ops = workflow.split("## 명시적으로 선택한 OMC 작업", 1)[1]
+    assert "### 오케스트레이션 사용 원칙" in explicit_ops
+    assert "(omc_quickstart.md)" in explicit_ops
 
 
 def test_orchestration_usage_doc_keeps_codex_input_explicit() -> None:

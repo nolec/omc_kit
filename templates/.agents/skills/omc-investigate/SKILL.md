@@ -1,6 +1,6 @@
 ---
 name: omc-investigate
-description: "버그 디버그·에러 추적·근본 원인 파악. 트리거: 디버그해줘, 왜 실패해, 원인 찾아줘, 에러 추적, 버그 잡아줘. 근본 원인→패턴 분석→가설 검증→수정 4단계. 증상 패치 금지."
+description: "$omc-investigate 또는 명시적 OMC 원인 조사 요청. 재현과 가설 검증으로 근본 원인을 확인합니다."
 ---
 
 # OMC Investigate

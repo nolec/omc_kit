@@ -37,7 +37,7 @@ REQUIRED_SEQUENCE = [
     "동기화되어 있으면 상태 명령을 실행하지 않습니다",
     "제공된 정확한 context path",
     "python3 scripts/omc.py state sync-session --target . --mode autopilot --title \"omc-plan\" --request \"<현재 작업 한 줄 요약>\" --roles analysis",
-    "AGENTS.md Tier 1",
+    "docs/omc_explicit_workflow.md", "Tier 1",
     "CONTRACT",
     "목표",
     "범위 (포함)",
@@ -85,13 +85,6 @@ REQUIRED_STRUCTURED_COMPACTION_MARKERS = [
     "비차단 불확실성은 생략",
     "명시적으로 허용한 근거",
     "구현을 막는 불확실성만 decisions_required",
-]
-
-REQUIRED_NATURAL_TRIGGER_MARKERS = [
-    "트리거:",
-    "계획해줘",
-    "설계해줘",
-    "태스크 나눠줘",
 ]
 
 REQUIRED_ADJACENT_PRESERVATION_MARKERS = [
@@ -500,11 +493,13 @@ def test_plan_skill_places_frozen_benchmark_fast_path_before_general_phases():
     assert "references/workflow.md" in text[general_path:]
 
 
-def test_plan_skill_frontmatter_preserves_natural_language_triggers():
+def test_plan_skill_frontmatter_requires_explicit_omc_selection():
     text = _read(REQUIRED_PLAN_SKILL_PATHS[0])
     frontmatter = text.split("---", 2)[1]
-    missing = [marker for marker in REQUIRED_NATURAL_TRIGGER_MARKERS if marker not in frontmatter]
-    assert not missing, f"missing natural trigger markers: {missing}"
+    assert "$omc-plan" in frontmatter
+    assert "명시적 OMC 계획 요청" in frontmatter
+    for generic_request in ("계획해줘", "설계해줘", "태스크 나눠줘"):
+        assert generic_request not in frontmatter
 
 
 def test_plan_router_requires_explicit_runner_contract_for_schema_only():

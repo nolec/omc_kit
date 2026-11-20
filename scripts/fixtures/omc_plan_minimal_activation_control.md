@@ -1,5 +1,5 @@
 ---
 name: omc-plan
-description: "트리거: 계획해줘/설계해줘/태스크 나눠줘"
+description: "$omc-plan 또는 명시적 OMC 계획 요청."
 ---
 Activation control only.

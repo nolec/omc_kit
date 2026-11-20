@@ -38,12 +38,12 @@ o1/o3/o4 계열은 **내부 추론(chain-of-thought)이 자동으로 작동**합
 
 세션 시작·도구 실행·Git 자동 훅은 비활성 상태로 유지합니다.
 원본에서 `state init`, `state status`, `session_start`를 자동 실행하지 않습니다.
-읽기 전용 요청은 파일·Git 조회로 확인합니다. 구현은 승인된 격리 작업 공간에서
-명시적 진입과 CONTRACT·RED·검증 절차를 따릅니다. 설치가 작업 승인을 대신하지 않습니다.
+읽기 전용 요청은 파일·Git 조회로 확인합니다. 일반 구현은 Superpowers 흐름과 프로젝트 규칙을 따릅니다.
+사용자가 OMC 구현 흐름을 명시적으로 선택한 경우 승인된 격리 작업 공간에서 기존 진입·CONTRACT·RED·검증 절차를 적용합니다.
 
 ## Codex 진입점
 
-`$omc-*` 스킬 또는 자연어 키워드로 자동 트리거됩니다.
+OMC 작업 흐름을 선택할 때 필요한 스킬을 직접 호출합니다.
 
 ```
 $omc-plan 로그인 기능 구현
@@ -51,7 +51,7 @@ $omc-task 버튼 컴포넌트 추가
 $omc-review
 ```
 
-권장 순서: `$omc-plan` → `$omc-task` → `$omc-review` → `$omc-ship`
+OMC 단독 운영 시 권장 순서: `$omc-plan` → `$omc-task` → `$omc-review` → `$omc-ship`
 
 세부 규칙 전체: **AGENTS.md** 참조
 

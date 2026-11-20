@@ -7,16 +7,24 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_codex_agents_template_keeps_no_auto_progress_guard():
-    text = (ROOT / "templates/AGENTS.md").read_text(encoding="utf-8")
+    agents = (ROOT / "templates/AGENTS.md").read_text(encoding="utf-8")
+    workflow = (ROOT / "docs/omc_explicit_workflow.md").read_text(encoding="utf-8")
+    assert "스킬 완료 후 자동 진행 금지" in agents
+    assert "다음 스킬로 자동 진입하지 않는다" in agents
     for marker in (
-        "스킬 완료 후 자동 진행 금지",
-        "다음 스킬로 자동 진입하지 않는다",
-        "| 완료된 스킬 | 금지 동작 |",
+        "#### 예외: 승인된 단일 작업 V0 내부 단계",
+        "#### 예외: 이미 제시한 local commit 선택의 단일 승인 상속",
         "| omc-task | 완료 후 자동으로 omc-review/omc-ship 실행 금지 |",
-        "**올바른 동작:**",
-        "**금지 동작:**",
     ):
-        assert marker in text
+        assert marker in workflow
+
+
+def test_omc_workflow_requires_only_applicable_red_checkpoints():
+    workflow = (ROOT / "docs/omc_explicit_workflow.md").read_text(encoding="utf-8")
+    assert "적용되는 체크포인트를 완료한 뒤 다음 단계로 진행합니다" in workflow
+    assert "기존 정책상 RED가 필요한 작업에만 적용" in workflow
+    assert "버그 재현과 신규 함수 등 기존 RED 의무" in workflow
+    assert "체크박스를 채우지 않으면 다음 단계로 진행하지 않습니다" not in workflow
 
 
 @pytest.mark.parametrize("base", [".agents", "templates/.agents"])
