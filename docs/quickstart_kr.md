@@ -1,5 +1,18 @@
 # OMC Quickstart KR
 
+## Codex에서 Superpowers와 함께 시작하기
+
+Codex에서 Superpowers로 작업을 시작하고 계획·구현·검증을 진행합니다. OMC가 설치된 프로젝트 루트에서는 필요한 순간에 아래 기능을 직접 호출합니다.
+
+| 필요한 때 | OMC 기능 |
+|---|---|
+| 작업을 시작하거나 다시 열었을 때 | `python3 scripts/omc.py state status --target .`로 상태를 조회합니다. Superpowers 계획 원장이 있으면 `--superpowers-ledger`에 경로를 지정할 수 있습니다. |
+| 커밋하기 전에 요청 범위를 확인할 때 | `python3 scripts/omc.py scope-check --target . --expected-path scripts/example.py`로 요청 경로와 staged 경로를 비교합니다. |
+| 기존 검증에서 빠진 UI 확인 항목을 찾을 때 | Codex에서 `$omc-qa`를 호출하고 기존 테스트 결과와 실행 환경을 함께 전달합니다. |
+| 프로젝트 교훈을 찾을 때 | `python3 scripts/omc_lesson.py --target . search "키워드"`를 실행합니다. |
+
+OMC는 Codex Agent Skills와 공통 CLI를 지원합니다. Claude Code·Gemini CLI·Antigravity·Cursor 전용 설치 지원은 종료됐습니다. 명령별 판정 기준은 [OMC Quickstart](omc_quickstart.md)를 참고하세요.
+
 ## 핵심 원칙
 
 - 자동 세션 훅은 비활성이며 필요한 상태 조회와 교훈 검색은 명시적으로 실행합니다.
@@ -12,7 +25,9 @@
 
 자동 세션·도구·Git 훅은 비활성입니다. 세션 시작 시 초기화 명령을 자동 실행하지 않습니다. 아래 CLI는 사용자가 요청한 작업 공간에서만 명시적으로 호출합니다.
 
-## 팀 운영 루틴
+## OMC 단독 운영 예시
+
+OMC만으로 작업할 때는 Codex에서 필요한 스킬을 직접 호출하거나 아래처럼 공통 CLI에서 요청을 시작할 수 있습니다.
 
 1. **요청 시작** — 역할 추천 + 컨펌
 
@@ -39,7 +54,7 @@ python3 scripts/omc_lesson.py add -i
 
 ---
 
-## 시나리오 1. 단일 작업 요청
+### 단독 운영에서 단일 작업 요청
 
 ```bash
 python3 scripts/omc.py "로그인 기능 구현해줘"
@@ -52,7 +67,7 @@ python3 scripts/omc.py "로그인 기능 구현해줘"
 
 ---
 
-## 시나리오 2. 자율 루프 (Autopilot)
+### 단독 운영에서 자율 루프 (Autopilot)
 
 여러 스텝을 자동 실행하고 `expect` 검증으로 품질을 확인합니다.
 
@@ -130,15 +145,14 @@ python scripts/omc.py version --target .
 
 ---
 
-## 시나리오 7. 실행기 선택
+## 공통 CLI의 Gemini 실행기 예시
+
+Gemini CLI가 별도로 설치된 환경에서 공통 CLI를 통해 실행기를 직접 지정하는 예시입니다. OMC의 Gemini 전용 설치 지원 범위와는 별개입니다.
 
 ```bash
 OMC_EXECUTOR=gemini python3 scripts/omc.py "작업 요청"
-OMC_EXECUTOR=codex  python3 scripts/omc.py "작업 요청"
 python3 scripts/omc_chat.py --executor gemini "작업 요청"
 ```
-
-기본값: `OMC_EXECUTOR` env → codex 탐지 → gemini 탐지 → codex fallback
 
 ---
 
@@ -172,7 +186,7 @@ python3 scripts/omc_pipeline_guard.py status
 동작 조건:
 - 세션 상태가 `confirmed` (이전 작업 완료 후 새 작업 선언 전)
 - 입력이 "응", "ㅇ", "진행하자", "계속해" 등 15자 미만 모호 패턴
-- 명시적 스킬명(`omc-task`, `/plan` 등) 없을 때
+- 명시적 스킬명(`$omc-task`, `$omc-plan` 등)이 없을 때
 
 단, 에이전트가 현재 세션의 로컬 커밋 선택지를 `state decision-open`으로 먼저 기록했다면 정확히 일치하는 짧은 선택은 현재 작업 승인으로 상속됩니다. 같은 세션과 변경 범위에서만 유효하고, 커밋 성공 후 `state decision-consume`으로 한 번만 소비됩니다. push·PR·deploy·delete 권한은 상속하지 않습니다.
 
@@ -193,8 +207,9 @@ python3 scripts/omc.py state decision-consume --target . --decision-id commit-gr
 ```
 [OMC] 모호한 진행 요청입니다 — 무엇을 진행할까요?
   직전 스킬: omc-review
-  예: "omc-task 진행해줘" 또는 "/plan [설명]"
 ```
+
+Codex에서 계획을 이어가려면 `$omc-plan 작업 설명`처럼 스킬을 명시합니다.
 
 ---
 

@@ -103,12 +103,7 @@ Codex adapter는 아직 구현되지 않았고 이번 범위에서 개발하지 
 
 ## 일반 사용 경로
 
-일반 개발 작업은 내부 benchmark 명령을 직접 조합하지 않고 아래 흐름으로 사용합니다.
-
-1. `python3 scripts/omc.py setup --target /path/to/project`으로 설치합니다.
-2. 구현은 Codex의 `$omc-task`로 시작합니다.
-3. `python3 scripts/omc.py state status --target .`로 현재 세션과 실행 상태를 확인합니다.
-4. 변경 검토는 `$omc-review`, 배포 준비는 `$omc-ship`을 사용합니다.
+Codex에서 Superpowers로 계획·구현·검증을 진행합니다. OMC가 필요한 프로젝트에는 `python3 scripts/omc.py setup --target /path/to/project`로 설치한 뒤, 작업 상태 조회, 커밋 범위 확인, 추가 QA, 교훈 검색이 필요할 때 해당 기능을 직접 호출합니다. [Superpowers와 함께 쓰는 Quickstart](docs/omc_quickstart.md)
 
 `product-value-*`, `execute-n-child`, acceptance·evidence 명령은 OMC 자체를 검증하는 내부 research 명령입니다. 기존 자동화와 호환되도록 직접 호출은 유지하지만 루트 `--help`의 일반 사용 목록에는 노출하지 않습니다.
 이 research 실행은 일반 개발 작업의 완료율·사용자 마찰 관찰 표본에 포함하지 않습니다.
@@ -203,17 +198,19 @@ python3 scripts/omc_doctor.py
 
 ## 사용 방법
 
-### 일반 요청
+### Superpowers 작업 중 OMC 사용
 
-Codex에서는 Agent Skill을 사용합니다.
+작업을 재개할 때는 `state status`, 커밋 전에 요청 경로와 staged 경로를 비교할 때는 `scope-check`를 실행합니다. 기존 검증에서 놓친 UI 확인 항목은 `$omc-qa`로 찾고, 관련 프로젝트 교훈은 `omc_lesson.py search`로 조회합니다.
+
+### OMC 단독 운영 예시
+
+OMC만으로 진행하는 경우 Codex에서 필요한 Agent Skill을 직접 호출합니다.
 
 ```text
 $omc-plan 로그인 기능 구현 계획
 $omc-task 계획에 따라 구현
 $omc-review 변경사항 리뷰
 ```
-
-### 권장 흐름
 
 ```text
 간단한 작업       -> task -> review
@@ -291,13 +288,9 @@ envelope = run_review_in_snapshot(
 )
 ```
 
-## LLM별 진입점
+## Codex 스킬과 공통 CLI
 
-| 실행기 | 기본 진입점 | 설정 위치 |
-|---|---|---|
-| Codex | `$omc-plan`, `$omc-task`, `$omc-review` | `.agents/skills/`, `.codex/` |
-
-모든 실행기는 공통 규칙을 `AGENTS.md`에서 읽고, 실행기별 overlay는 각 개인 설정 영역에서 읽습니다.
+Codex 스킬은 `.agents/skills/`에 있으며 공통 프로젝트 규칙은 `AGENTS.md`에서 관리합니다. 공통 CLI에서 Gemini를 명시적으로 선택하는 방법은 [Gemini 실행기 예시](docs/quickstart_kr.md#공통-cli의-gemini-실행기-예시)를 참고하세요.
 
 ## 안전 경계
 
@@ -332,8 +325,6 @@ omc_kit/
 ├── scripts/                 실행기, guard, orchestrator, autopilot
 ├── templates/
 │   ├── AGENTS.md             공통 규칙 SSOT
-│   ├── CLAUDE.md             Claude overlay
-│   ├── GEMINI.md             Gemini overlay
 │   ├── CODEX.md              Codex overlay
 │   ├── ETHOS.md              엔지니어링 원칙
 │   ├── CONVENTIONS.md        코딩 컨벤션
