@@ -330,20 +330,29 @@ def cmd_add(root: Path, args) -> int:
 
     path = _lesson_path(root, title)
     if os.path.lexists(_retraction(path)):
-        print("[LESSON] 철회된 교훈은 덮어쓸 수 없습니다.", file=sys.stderr)
+        print(f"[LESSON] 철회된 교훈은 덮어쓸 수 없습니다: {path.name}", file=sys.stderr)
         return 1
-    path.write_text(
-        _TEMPLATE.format(
-            title=title,
-            date=datetime.now().strftime("%Y-%m-%d"),
-            tags=tags,
-            symptom=symptom,
-            cause=cause,
-            rule=rule,
-            verify=verify,
-        ),
-        encoding="utf-8",
+    content = _TEMPLATE.format(
+        title=title,
+        date=datetime.now().strftime("%Y-%m-%d"),
+        tags=tags,
+        symptom=symptom,
+        cause=cause,
+        rule=rule,
+        verify=verify,
     )
+    try:
+        with tempfile.TemporaryDirectory(prefix=".add-", dir=path.parent) as temporary:
+            staged = Path(temporary) / "lesson.md"
+            staged.write_text(content, encoding="utf-8")
+            # Publish the completed file only if the destination is still free.
+            os.link(staged, path)
+    except FileExistsError:
+        print(f"[LESSON] 같은 이름의 교훈이 이미 있습니다: {path.name}", file=sys.stderr)
+        return 1
+    except OSError as error:
+        print(f"[LESSON] 저장 실패: {error}", file=sys.stderr)
+        return 1
     print(f"\n[LESSON] ✅ 저장됨: {path.relative_to(root)}")
     print("         다음 세션 시작 시 자동으로 컨텍스트에 포함됩니다.")
     return 0

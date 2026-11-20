@@ -7,6 +7,48 @@ import omc_context
 import omc_lesson
 
 
+def _add_command(root: Path, rule: str) -> list[str]:
+    return [sys.executable, "-B", omc_lesson.__file__, "--target", str(root),
+            "add", "--title", "Invoice delivery", "--symptom", "Delivery failed",
+            "--rule", rule, "--verify", "Verify delivery"]
+
+
+def test_add_reports_existing_filename_and_preserves_contents(tmp_path):
+    first = subprocess.run(_add_command(tmp_path, "first rule"), capture_output=True, text=True)
+    assert first.returncode == 0, first.stderr
+    folder = tmp_path / ".omc/lessons"
+    original, = folder.iterdir()
+    before = original.read_bytes(), original.stat().st_mtime_ns
+
+    second = subprocess.run(_add_command(tmp_path, "second rule"), capture_output=True, text=True)
+
+    assert second.returncode == 1
+    assert original.name in second.stderr
+    assert list(folder.iterdir()) == [original]
+    assert (original.read_bytes(), original.stat().st_mtime_ns) == before
+
+
+def test_simultaneous_add_publishes_only_one_complete_lesson(tmp_path):
+    rules = ("first concurrent rule", "second concurrent rule")
+    with subprocess.Popen(_add_command(tmp_path, rules[0]),
+                          stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) as first, \
+         subprocess.Popen(_add_command(tmp_path, rules[1]),
+                          stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) as second:
+        first_output = first.communicate(timeout=10)
+        second_output = second.communicate(timeout=10)
+
+    assert sorted((first.returncode, second.returncode)) == [0, 1]
+    winner = first.returncode == 0
+    original, = (tmp_path / ".omc/lessons").iterdir()
+    loser_stderr = second_output[1] if winner else first_output[1]
+    winning_rule, losing_rule = rules if winner else rules[::-1]
+    assert original.name in loser_stderr
+    content = original.read_text(encoding="utf-8")
+    assert f"## 적용된 규칙\n{winning_rule}\n" in content
+    assert losing_rule not in content
+    assert content.endswith("## 검증 커맨드\nVerify delivery\n")
+
+
 def test_withdrawn_lesson_preserves_source_and_stays_out_of_recall(tmp_path, capsys):
     folder = tmp_path / ".omc/lessons"
     folder.mkdir(parents=True)
