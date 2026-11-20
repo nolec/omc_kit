@@ -215,7 +215,7 @@ $omc-review 변경사항 리뷰
 ```text
 간단한 작업       -> task -> review
 복잡한 작업       -> plan -> task -> review
-고위험·모호 작업  -> brainstorm/office-hours/critique -> plan -> task -> review
+고위험·모호 작업  -> office-hours/critique -> plan -> task -> review
 배포·커밋 준비    -> review 승인 후 명시적으로 ship
 ```
 

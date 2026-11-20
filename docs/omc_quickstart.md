@@ -17,10 +17,10 @@ OMC는 Codex Agent Skills(`.agents/skills`)와 공통 CLI를 지원합니다. Cl
 
 ## OMC 단독 운영 예시
 
-OMC만으로 작업을 진행할 때는 Codex에서 필요한 스킬을 명시적으로 호출합니다. 아래는 요구사항 탐색부터 회고까지 이어지는 예시입니다.
+OMC만으로 작업을 진행할 때는 Codex에서 필요한 스킬을 명시적으로 호출합니다. 요구사항이 모호하면 Superpowers의 브레인스토밍으로 범위를 정리하거나, OMC 단독 운영에서는 `$omc-office-hours`의 질문으로 시작합니다. 아래는 OMC 단독 운영 예시입니다.
 
 ```text
-$omc-brainstorm → $omc-office-hours → $omc-plan → $omc-task → $omc-review → $omc-ship → $omc-retro
+$omc-office-hours → $omc-plan → $omc-task → $omc-review → $omc-ship → $omc-retro
 ```
 
 설치 상태와 자동화 기능의 운영 요약이 필요할 때 각각 다음 명령을 실행합니다.

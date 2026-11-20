@@ -9,7 +9,6 @@ CODEX_COMMANDS = TEMPLATES / ".codex" / "commands" / "omc-commands.md"
 
 COMMAND_FILES = [
     "benchmark",
-    "brainstorm",
     "ceo-review",
     "critique",
     "investigate",

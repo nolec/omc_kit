@@ -50,7 +50,7 @@ PHASE 1 ▸ CONTRACT
 DoD    : _______________________________________________
 제약   : _______________________________________________
 적용 스킬 : ☐ omc-plan  ☐ omc-task  ☐ omc-investigate
-            ☐ omc-review  ☐ omc-brainstorm  ☐ 해당 없음
+            ☐ omc-review  ☐ 해당 없음
 
 ☐ 사용자 컨펌 완료
   python3 scripts/omc_pipeline_guard.py contract-done
@@ -128,7 +128,7 @@ $omc-plan → $omc-task → $omc-review → $omc-ship → $omc-retro
 ```
 
 필요할 때만 앞에 붙이는 선택 단계:
-- 요구사항이 모호하면 → `$omc-brainstorm` 먼저
+- 요구사항이 모호하면 Superpowers의 브레인스토밍으로 범위를 정리합니다. OMC 단독 운영에서는 `$omc-office-hours`로 필요한 질문부터 확인합니다.
 - 기능 방향이 맞는지 의심되면 → `$omc-office-hours`
 - 버그 원인이 불명확하면 → `$omc-investigate`
 
@@ -350,7 +350,6 @@ python3 scripts/omc_autopilot.py status
 | omc-plan | Phase 완료 후 자동으로 omc-task 실행 금지 |
 | omc-critique | 판정 후 자동으로 omc-plan/omc-task 실행 금지 |
 | omc-benchmark | 분석 후 자동으로 omc-office-hours/omc-plan 실행 금지 |
-| omc-brainstorm | 결론 후 자동으로 omc-plan 실행 금지 |
 | omc-task | 완료 후 자동으로 omc-review/omc-ship 실행 금지 |
 
 **올바른 동작:**

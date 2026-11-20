@@ -40,11 +40,21 @@ def test_fresh_codex_registration_passes_without_other_ide_files(target):
 def test_all_installed_omc_skills_are_discovered(target):
     result = run(target, '--all')
     assert result.returncode == 0, result.stdout + result.stderr
-    expected = {'autopilot', 'benchmark', 'brainstorm', 'ceo-review', 'critique',
+    expected = {'autopilot', 'benchmark', 'ceo-review', 'critique',
                 'dashboard', 'investigate', 'lesson', 'office-hours', 'plan', 'qa',
                 'reentry', 'retro', 'review', 'ship', 'status', 'task'}
     assert {line.removeprefix('SKILL CHECK: omc-') for line in result.stdout.splitlines()
             if line.startswith('SKILL CHECK: ')} == expected
+
+
+def test_retired_brainstorm_is_absent_from_fresh_install(target):
+    assert not (target / ".agents/skills/omc-brainstorm").exists()
+    for relative in ("docs/omc_quickstart.md", "docs/omc_explicit_workflow.md", ".codex/commands/omc-commands.md"):
+        assert "$omc-brainstorm" not in (target / relative).read_text(encoding="utf-8")
+    (target / ".agents/skills/omc-brainstorm/agents").mkdir(parents=True)
+    result = run(target, "--all")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "SKILL CHECK: omc-brainstorm" not in result.stdout
 
 
 @pytest.mark.parametrize('relative', ['.agents/skills/omc-review/SKILL.md', '.codex/commands/omc-commands.md', 'AGENTS.md'])

@@ -21,6 +21,12 @@ def _load_module():
     return module
 
 
+def test_ambiguous_product_request_recommends_office_hours():
+    hint = _load_module().suggest_orchestration("새 서비스 아이디어의 요구사항 정리부터 도와줘")
+    assert hint["recommended_skill"] == "$omc-office-hours"
+    assert hint["response_mode"] == "answer-first"
+
+
 def test_orchestration_hint_routes_review_request():
     mod = _load_module()
 

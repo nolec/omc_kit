@@ -713,6 +713,38 @@ class TestInstallManifest(unittest.TestCase):
             self.assertEqual(finalized["AGENTS.md"]["source_sha256"], expected_hash)
             self.assertEqual(finalized["AGENTS.md"]["target_sha256"], expected_hash)
 
+    def test_retired_local_edit_remains_preserved_across_reinstalls(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            rel = ".agents/skills/omc-brainstorm/SKILL.md"
+            retired = root / rel
+            retired.parent.mkdir(parents=True)
+            retired.write_text("original", encoding="utf-8")
+            previous_hash = _install._sha256_file(retired)
+            retired.write_text("project modification", encoding="utf-8")
+            manifest = {rel: {
+                "policy": "managed_exact",
+                "previously_managed": True,
+                "previous_target_sha256": previous_hash,
+                "registered_current_install": False,
+            }}
+            cases = (
+                (previous_hash, "exclusive_managed"),
+                ("", "exclusive_managed"),
+                (_install._sha256_file(retired), "manual_review"),
+            )
+            for baseline, ownership in cases:
+                with self.subTest(baseline=baseline, ownership=ownership):
+                    stale = {rel: {
+                        **manifest[rel],
+                        "previous_target_sha256": baseline,
+                        "previous_receipt_schema_version": 3,
+                        "ownership": ownership,
+                    }}
+                    finalized = _install._finalize_install_manifest(root, stale)
+                    self.assertEqual(finalized[rel]["policy"], "preserve")
+                    self.assertEqual(retired.read_text(encoding="utf-8"), "project modification")
+
     def test_finalize_manifest_preserves_unregistered_exact_entry(self):
         manifest = {
             "docs/not-copied.md": {

@@ -99,7 +99,7 @@ _AMBIGUOUS=0
 _EXPLICIT=0
 
 # 명시적 스킬명 포함 여부 먼저 확인
-if printf '%s' "${PROMPT}" | grep -qiE "omc-|/plan|/task|/review|/ship|/investigate|/critique|/brainstorm|스킬|skill"; then
+if printf '%s' "${PROMPT}" | grep -qiE "omc-|/plan|/task|/review|/ship|/investigate|/critique|스킬|skill"; then
   _EXPLICIT=1
 fi
 

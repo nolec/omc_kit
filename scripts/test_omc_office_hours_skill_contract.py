@@ -42,7 +42,7 @@ REQUIRED_SEQUENCE = [
 ]
 
 REQUIRED_BEHAVIOR_MARKERS = [
-    "$omc-brainstorm",
+    "막히는 질문부터 확인",
     "$omc-ceo-review",
     "$omc-plan",
     "사용자 선택 대기",

@@ -127,7 +127,11 @@ def print_report(skill: str, results: list[dict], fix_hint: bool = False):
 
 def list_all_skills() -> list[str]:
     def names(folder: Path) -> set[str]:
-        return {p.name for p in folder.iterdir() if p.is_dir() and p.name.startswith('omc-')} if folder.is_dir() else set()
+        if not folder.is_dir():
+            return set()
+        return {p.name for p in folder.iterdir()
+                if p.is_dir() and p.name.startswith('omc-')
+                and ((p / 'SKILL.md').exists() or (p / 'SKILL.md').is_symlink())}
     skills = names(ROOT/'.agents/skills')
     source = get_omc_kit_path()
     if source is not None:

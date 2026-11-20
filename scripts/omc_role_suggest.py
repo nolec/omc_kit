@@ -217,7 +217,7 @@ def suggest_orchestration(text: str, *, target: Path | None = None) -> dict[str,
     review_keywords = ("리뷰", "review", "diff", "pr", "코드 봐줘", "검토")
     investigate_keywords = ("버그", "debug", "에러", "error", "원인", "왜 실패")
     ship_keywords = ("배포", "ship", "release", "푸시 준비", "deploy")
-    brainstorm_keywords = ("브레인스토밍", "아이디어", "막막", "요구사항 정리")
+    ambiguous_product_keywords = ("브레인스토밍", "아이디어", "막막", "요구사항 정리")
     benchmark_keywords = ("벤치마크", "benchmark", "비교")
     critique_keywords = ("비판", "critique", "약점", "냉정하게")
     status_keywords = ("상태", "뭐하고 있었", "어디까지", "status")
@@ -372,10 +372,10 @@ def suggest_orchestration(text: str, *, target: Path | None = None) -> dict[str,
             primary_role="analysis",
             task_kind_hint="plan",
         )
-    if _contains_any(normalized, brainstorm_keywords):
+    if _contains_any(normalized, ambiguous_product_keywords):
         return _build_orchestration(
             response_mode="answer-first",
-            recommended_skill="$omc-brainstorm",
+            recommended_skill="$omc-office-hours",
             primary_role="analysis",
             task_kind_hint="plan",
         )

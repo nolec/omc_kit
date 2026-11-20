@@ -148,9 +148,6 @@ python3 scripts/omc_pipeline_guard.py status
 
 ## 선택 스킬 (필요할 때만)
 
-### `$omc-brainstorm [주제]`
-소크라테스식 4단계 탐색: What(현상) → Why(원인) → How(해결 방향) → Decide(옵션 A/B/C)
-
 ### `$omc-office-hours [요청]`
 6개 강제 질문: 대상 사용자 / 핵심 고통 / 성공 기준 / MVP / 비범위 / 10점 버전
 

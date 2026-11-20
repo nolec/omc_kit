@@ -342,7 +342,7 @@ PASS / FAIL: PASS
 PASS / FAIL: PASS
 메모: benchmark에 근거/채택 의사 부족 보류 분기 추가
 
-시나리오 12:
+시나리오 12 (폐기된 스킬의 검증 이력):
 입력 스킬: omc-brainstorm
 사용자 마지막 의도: 옵션은 나왔지만 사용자 확인 전
 기대 추천: 사용자 선택 대기
@@ -501,7 +501,7 @@ PASS / FAIL: PASS
 | `omc-status` | 있음 | 검증 완료 | 상태 확인만 원하는 경우 선택 대기 확인 |
 | `omc-investigate` | 있음 | 검증 완료 | 근거 부족 상태에서 task/review 과추천 방지 확인 |
 | `omc-benchmark` | 있음 | 검증 완료 | 비교 대상/채택 의사 부족 시 선택 대기 확인 |
-| `omc-brainstorm` | 있음 | 검증 완료 | 사용자 확인 전 plan 과추천 방지 확인 |
+| `omc-brainstorm` | 폐기 | 과거 검증 이력 | 사용자 확인 전 plan 과추천 방지 확인 |
 | `omc-retro` | 있음 | 검증 완료 | stale / 반복 패턴 / 이월 작업 추천 우선순위 확인 |
 | `omc-lesson` | 있음 | 검증 완료 | 기록 완료 후 retro 연결 / 결과 확인 단계 선택 대기 확인 |
 | `omc-autopilot` | 있음 | 검증 완료 | 준비 단계 선택 대기 / 실패 시 결과 확인 분기 확인 |
