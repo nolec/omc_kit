@@ -1023,28 +1023,35 @@ def _main() -> int:
 
     quickstart = """# OMC Kit Quickstart
 
-## 30초 설치 후 바로 시작
+## Codex에서 Superpowers와 함께 시작하기
 
-```bash
-# 1. 상태 확인
-python3 scripts/omc_doctor.py --target .
+이 가이드는 Superpowers로 계획·구현·검증을 진행하는 Codex 프로젝트를 기준으로 합니다. 작업 요청은 Superpowers 흐름에서 시작하고, 아래 상황에 해당할 때 OMC를 직접 호출합니다. 명령은 OMC가 설치된 프로젝트 루트에서 실행합니다.
 
-# 2. 운영 요약 확인
-python3 scripts/omc_autopilot.py overview
+| 필요한 때 | OMC 기능 |
+|---|---|
+| 작업을 시작하거나 다시 열었을 때 | `python3 scripts/omc.py state status --target .`로 작업 상태를 조회합니다. Superpowers 계획 원장이 있으면 `--superpowers-ledger`에 경로를 지정해 마지막 완료 범위를 현재 Git 이력과 대조할 수 있습니다. |
+| 커밋 전에 다른 변경이 섞였는지 확인할 때 | `python3 scripts/omc.py scope-check --target . --expected-path scripts/example.py`로 요청 범위와 staged 경로를 비교합니다. |
+| 기존 검증에서 빠진 UI 확인 항목을 찾을 때 | Codex에서 `$omc-qa`를 호출하고 기존 테스트 결과와 실행 환경을 함께 전달합니다. |
+| 프로젝트 교훈을 찾을 때 | `python3 scripts/omc_lesson.py --target . search "키워드"`를 실행합니다. |
 
-# 3. 첫 작업 요청
-python3 scripts/omc.py "만들고 싶은 것"
+## 현재 지원 범위
 
-# 4. 스프린트 순서 (권장)
-# /brainstorm → /office-hours → /plan → /task → /review → /ship → /retro
+OMC는 Codex Agent Skills(`.agents/skills`)와 공통 CLI를 지원합니다. Claude Code·Gemini CLI·Antigravity·Cursor 전용 설치 지원은 종료됐습니다. OMC 자동 세션·도구·Git 훅은 비활성 상태입니다.
+
+## OMC 단독 운영 예시
+
+OMC만으로 작업을 진행할 때는 Codex에서 필요한 스킬을 명시적으로 호출합니다. 아래는 요구사항 탐색부터 회고까지 이어지는 예시입니다.
+
+```text
+$omc-brainstorm → $omc-office-hours → $omc-plan → $omc-task → $omc-review → $omc-ship → $omc-retro
 ```
 
-## 슬래시 커맨드 / 스킬
+설치 상태와 자동화 기능의 운영 요약이 필요할 때 각각 다음 명령을 실행합니다.
 
-### Codex IDE (Agent Skills)
-
-명시적: `$omc-plan`, `$omc-task`, `$omc-review` 등  
-암묵적: "계획해줘", "태스크 나눠줘" 등 자연어로도 자동 트리거됩니다.
+```bash
+python3 scripts/omc_doctor.py --target .
+python3 scripts/omc_autopilot.py overview
+```
 
 ## 자주 쓰는 CLI 명령
 
