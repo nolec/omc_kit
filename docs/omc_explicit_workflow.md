@@ -117,6 +117,10 @@ PHASE 5 ▸ REFACTOR + TDD GATE  🔵
 
 OMC 오케스트레이션을 직접 요청할 때는 [Quickstart](omc_quickstart.md)의 조회·미리보기 명령과 선택한 스킬의 실행 범위를 확인합니다.
 
+#### 구현 작업의 속도 기준
+
+DoD가 고정되고 변경 범위를 한 문장으로 설명할 수 있는 작업은 fast로 진행합니다. 새 구현 파일, API 변경, 여러 파일의 연쇄 수정은 normal을 적용합니다. fast는 보고를 줄이는 방식이며 해당 작업에 필요한 검증은 모두 수행합니다.
+
 ---
 
 ### 스프린트 파이프라인 (Plan → Build → Review → Ship → Reflect)

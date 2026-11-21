@@ -199,6 +199,33 @@ class TestSkillTemplateSsot(unittest.TestCase):
             self.assertIn(str(reference), agents.read_text(encoding="utf-8"))
             self.assertEqual((target / reference).read_bytes(), (root / reference).read_bytes())
 
+    def test_installed_workflow_guides_use_current_codex_entrypoints(self):
+        root = Path(__file__).resolve().parent.parent
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp)
+            result = subprocess.run(
+                [sys.executable, str(root / "scripts/install.py"), "--target", str(target)],
+                cwd=root, capture_output=True, text=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            docs = target / "docs"
+            workflow = (docs / "omc_workflow.md").read_text(encoding="utf-8")
+            for name in ("omc_quickstart.md", "omc_explicit_workflow.md"):
+                self.assertIn(f"]({name})", workflow)
+                self.assertTrue((docs / name).is_file())
+            self.assertIn("자동 세션·도구·Git 훅은 비활성", workflow)
+            for outdated in (".claude/CLAUDE.md", ".gemini/GEMINI.md", "훅도 같이 실행되어"):
+                self.assertNotIn(outdated, workflow)
+            self.assertNotIn("python scripts/omc.py hook session_start", workflow)
+
+            task_path = target / ".agents/skills/omc-task/SKILL.md"
+            task = task_path.read_text(encoding="utf-8")
+            self.assertNotIn("docs/orchestration_usage.md", task)
+            self.assertIn("docs/omc_explicit_workflow.md", task)
+            self.assertIn("구현 작업의 속도 기준", task)
+            explicit = (docs / "omc_explicit_workflow.md").read_text(encoding="utf-8")
+            self.assertIn("#### 구현 작업의 속도 기준", explicit)
+
     def test_second_non_force_install_keeps_generated_receipt_auditable(self):
         root = Path(__file__).parent.parent
         installer = root / "scripts" / "install.py"

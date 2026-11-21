@@ -17,7 +17,7 @@ Codex는 원본의 state init/session_start/sync-require보다 먼저 진입을 
 
 # OMC TDD 파이프라인
 
-Tier별 허용 생략 외에는 단계를 건너뛰지 않습니다. 적용되는 구현 단계는 아래 순서로 진행합니다. 계획이 없으면 `$omc-plan`, 원인 불명 버그면 `$omc-investigate`로 돌립니다. 속도 기준은 `docs/orchestration_usage.md`와 같습니다: DoD가 고정되면 fast, 새 파일/API/다중 파일이면 normal.
+Tier별 허용 생략 외에는 단계를 건너뛰지 않습니다. 적용되는 구현 단계는 아래 순서로 진행합니다. 계획이 없으면 `$omc-plan`, 원인 불명 버그면 `$omc-investigate`로 돌립니다. 속도 기준은 저장소 루트의 `docs/omc_explicit_workflow.md`에서 **구현 작업의 속도 기준** 절을 확인합니다.
 
 ## 작업별 검증과 준비 확인
 

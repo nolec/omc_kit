@@ -18,23 +18,11 @@
 - 역할 프롬프트는 `prompts/ROLE_*.md`에 저장합니다.
 - 역할/프로필(조합)은 `prompts/team.json`이 SSOT입니다.
 
-## 0) 중요한 한계(자동 인식)
+## Codex 설치와 작업 시작
 
-LLM이 로컬 파일을 “자동으로” 읽는지는 사용하는 도구가 어떤 파일을 컨텍스트로 로드하느냐에 달려 있습니다.
+설치기는 Codex의 `AGENTS.md`, `CODEX.md`, `.agents/skills/`와 공통 CLI를 배치합니다. 일반 작업은 Codex에서 Superpowers로 진행하고, 필요한 OMC 기능은 [Quickstart](omc_quickstart.md)에서 확인합니다. OMC 작업 흐름을 명시적으로 선택했으면 [상세 운영 참조](omc_explicit_workflow.md)를 따릅니다.
 
-- 기본 언어: 사용자에게 보이는 안내/컨펌/보고는 **한글**을 기본으로 합니다(사용자가 영어를 명시하면 전환).
-
-- Codex CLI: `AGENTS.md`를 지침으로 사용할 수 있습니다.
-- Claude Code: 보통 `.claude/CLAUDE.md`를 개인 오버레이로 활용합니다(도구 설정에 따라 다름).
-- 기타 LLM/에디터: 프로젝트 지침 파일을 자동 로드하지 않을 수 있습니다.
-
-그래서 이 킷의 `scripts/install.py`는 `AGENTS.md`와 실행기별 개인 오버레이(`.claude/CLAUDE.md`, `.gemini/GEMINI.md`)를 배치해,
-“역할 제안 → 컨펌 → 진행” 습관이 기본으로 잡히도록 돕습니다.
-
-OMC 방향으로는 `scripts/omc.py`를 단일 진입점으로 쓰고, `autopilot`, `team`, `ulw`, `ralph`, `deep-interview` 같은 모드 키워드를 자동 해석하는 구성이 권장됩니다.
-또한 `.omc/` 아래에 `notepad.md`, `project-memory.json`, `state/sessions/`를 두고, 각 `omc` 실행마다 최근 작업 상태를 기록해 다음 세션에 다시 주입합니다.
-이제 `session_start`, `session_end`, `pre_compact`, `post_compact` 훅도 같이 실행되어, compact 전 스냅샷과 compact 후 notepad 재생성이 자동화됩니다.
-훅 정의는 `.omc/hooks.json`에서 바꿀 수 있고, 기본값은 builtin 훅이지만 `{"type":"shell","command":"..."}` 형태의 shell hook도 지원합니다.
+자동 세션·도구·Git 훅은 비활성입니다. 필요한 라이프사이클 처리는 작업 범위를 확인한 뒤 `python3 scripts/omc.py hook <이벤트>`로 명시적으로 실행합니다. 상태 조회는 `python3 scripts/omc.py state status --target .`를 사용합니다.
 
 ## 2) 기본 사용(수동 조합)
 
@@ -42,7 +30,7 @@ OMC 방향으로는 `scripts/omc.py`를 단일 진입점으로 쓰고, `autopilo
 python scripts/compose_prompt.py --roles search,analysis,senior_coding
 ```
 
-## 3) OMC-style 단일 진입점(추천)
+## 3) OMC 단독 운영의 명시적 요청
 
 ```bash
 # 단일 작업 (역할 추천 + 컨펌)
@@ -54,12 +42,10 @@ python scripts/omc_autopilot.py new --id feat-x --title "기능 X 구현"
 python scripts/omc.py autopilot --task-file .omc/tasks/feat-x.json
 python scripts/omc.py autopilot --task-file .omc/tasks/feat-x.json --dry-run
 
-# 상태/훅/compact
+# 설치·읽기 전용 상태 조회
 python scripts/omc.py setup --target .
 python scripts/omc.py verify-install --target .  # 설치 무결성 + 현재 원본 freshness 검증(unknown도 실패)
-python scripts/omc.py hook session_start
-python scripts/omc.py state status
-python scripts/omc.py state compact
+python scripts/omc.py state status --target .
 ```
 
 ## 4) 프로필 사용(추천)
