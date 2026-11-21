@@ -111,8 +111,13 @@ class TestSkillTemplateSsot(unittest.TestCase):
             self.assertNotIn("Tier 1 구현 요청은 자동으로 파이프라인에 진입", agents)
             self.assertNotIn("자연어 키워드로도 자동 트리거", agents)
             codex = (target / "CODEX.md").read_text(encoding="utf-8")
-            self.assertIn("사용자가 OMC 구현 흐름을 명시적으로 선택한 경우", codex)
-            self.assertNotIn("자연어 키워드로 자동 트리거", codex)
+            self.assertIn("[AGENTS.md](AGENTS.md)", codex)
+            self.assertEqual(codex, (root / "templates/CODEX.md").read_text(encoding="utf-8"))
+            for name in ("next_project_pack.md", "kit_map.md"):
+                installed = (target / "docs" / name).read_text(encoding="utf-8")
+                self.assertEqual(installed, (root / "docs" / name).read_text(encoding="utf-8"))
+                for outdated in (".claude/CLAUDE.md", ".gemini/GEMINI.md", "/plan", "세션 시작 훅이 자동 생성"):
+                    self.assertNotIn(outdated, installed)
             selection_cases = (
                 ("omc-plan", ("계획해줘", "설계해줘", "태스크 나눠줘")),
                 ("omc-task", ("구현해줘", "만들어줘", "코딩해줘")),

@@ -4,58 +4,33 @@
 
 이 문서는 OMC/멀티비서 킷을 다른 프로젝트로 옮길 때 무엇을 가져가야 하는지 빠르게 판단하기 위한 공통 지도입니다.
 
-## Codex 전용 지원
+## 지원 범위
 
-Codex 스킬과 공통 엔진만 배포합니다. 자동 세션·도구·Git 훅은 비활성입니다. 실제 프로젝트 설치는 별도 요청으로만 수행합니다.
+Codex 스킬과 공통 CLI를 배포합니다. 일반 작업은 Superpowers와 프로젝트 규칙을 따릅니다. 세션·도구·Git 자동 훅은 비활성 상태입니다. 설치 절차는 [새 프로젝트에 OMC 설치](next_project_pack.md)를 참고하세요.
 
-## SSOT
+## 원본과 설치 프로젝트
 
-공통 킷의 SSOT는 설치 receipt가 기록한 source checkout입니다.
+공통 파일의 원본은 `.omc/install-source.json`의 `source_path`에 기록된 체크아웃입니다. 체크아웃 이름과 위치는 프로젝트마다 다를 수 있습니다. 공통 파일을 갱신할 때는 원본의 `scripts/`, `templates/`, `docs/`에서 해당 파일을 수정하고, 대상 프로젝트에서 필요한 경우 명시적으로 재설치합니다.
 
-설치된 프로젝트에서는 `.omc/install-source.json`의 `source_path`를 확인합니다.
-source checkout이 우연히 `omc_kit/`이라는 이름으로 배치될 수는 있지만 고정
-경로는 아닙니다. 모든 변경은 `<OMC_SOURCE>/scripts/` 또는
-`<OMC_SOURCE>/templates/`에 먼저 적용한 뒤 설치된 프로젝트에서
-`python3 scripts/omc.py setup --target . --force`로 동기화합니다.
-
-## 다음 프로젝트로 가져갈 최소 묶음
-
-필수:
-- OMC source checkout 전체
-
-선택:
-- `AGENTS.md` (강권 — 세션 시작 훅이 자동 생성하지만 커스터마이즈 가능)
-- `project_prompts/` (도메인 role/profile 오버레이)
-
-가져가지 않아도 되는 것:
-- 현재 프로젝트 도메인 전용 docs
-- 루트의 중복 설명 문서
-
-## 레이어별 역할
+## 파일 구조
 
 ```
-omc_kit/
-  VERSION           ← OMC 릴리스 버전 SSOT (target 루트에는 미배포)
-  scripts/          ← 공용 실행·검증 스크립트 SSOT
-  templates/        ← SSOT 템플릿 (install.py가 배포)
-    AGENTS.md         공통 에이전트 규칙 (모든 LLM)
-    .codex/commands/  Codex CLI 커맨드 참조 (/project: 네임스페이스)
-    .agent-hooks/     명시적으로 호출하는 공용 훅 스크립트
-      omc-pipeline-check.sh   파일 수정 전 세션/TDD 파이프라인 차단
-      omc-prompt-inject.sh    UserPromptSubmit — BM25 교훈 주입 + 모호 메시지 감지
-      omc-post-file-check.sh  PostToolUse — 세션 미확인 파일 수정 경고 (소프트 가드)
-      omc-session-start.sh    세션 시작 훅
-      omc-session-end.sh      세션 종료 훅
-    .agents/skills/   Codex Agent Skills (SSOT — plural)
-      workflows/        명시적 슬래시 커맨드 (/plan, /task 등)
-      rules/            항상 적용 규칙 (omc-always.md)
-      skills/           암묵적 트리거 스킬 (.agents/skills/ 의 미러)
-  docs/             ← 사용 가이드
-  prompts/          ← 역할/모드 프롬프트
+OMC 원본 체크아웃/
+  VERSION                OMC 릴리스 버전
+  scripts/               공통 CLI와 검증 도구
+  templates/
+    AGENTS.md            프로젝트 규칙에 병합되는 OMC 관리 블록
+    CODEX.md             AGENTS.md를 가리키는 안내
+    .agents/skills/      Codex에서 $스킬명으로 호출하는 Agent Skills
+    .codex/commands/     Quickstart와 상세 운영 문서 링크
+    .agent-hooks/        수동 라이프사이클용 스크립트
+  docs/                  사용 및 운영 문서
+  prompts/               공통 역할·모드 프롬프트
 
-AGENTS.md           ← 공통 에이전트 규칙 (모든 LLM)
-project_prompts/    ← 현재 프로젝트 도메인 role/profile (선택)
-.omc/               ← 런타임 상태 (세션, 교훈, 비용, autopilot 기록)
+설치된 프로젝트/
+  AGENTS.md              프로젝트 규칙과 OMC 관리 블록
+  project_prompts/       프로젝트별 역할·프로필 (선택)
+  .omc/                  설치 출처, 교훈, 세션·작업 기록
 ```
 
 ## 핵심 스크립트 목록 (SSOT)
@@ -65,7 +40,7 @@ project_prompts/    ← 현재 프로젝트 도메인 role/profile (선택)
 | `omc.py` | 단일 진입점 |
 | `omc_state.py` | 세션 상태 R/W + compact |
 | `omc_guard.py` | 미확정 세션 실행 차단 |
-| `omc_hooks.py` | 세션 라이프사이클 훅 |
+| `omc_hooks.py` | 명시적 라이프사이클 처리 |
 | `omc_context.py` | 세션 컨텍스트 수집 (git + BM25 교훈) |
 | `omc_lesson.py` | 교훈 CRUD + BM25 검색 |
 | `omc_cost.py` | LLM 비용 추적 (토큰 파서) |
@@ -76,7 +51,7 @@ project_prompts/    ← 현재 프로젝트 도메인 role/profile (선택)
 | `omc_exec.py` | LLM CLI 실행 어댑터 |
 | `omc_chat.py` | 자연어 → OMC 실행 라우팅 |
 | `omc_peer_review.py` | 피어 리뷰 자동화 |
-| `omc_doctor.py` | 설치 상태 진단 + 자동 수정 |
+| `omc_doctor.py` | 설치 상태 진단 |
 | `omc_version.py` | 릴리스·원본·설치 무결성 상태 판정 |
 | `omc_utils.py` | 공통 유틸 (project_root) |
 | `install.py` | 다른 프로젝트로 배포 |
@@ -85,7 +60,7 @@ project_prompts/    ← 현재 프로젝트 도메인 role/profile (선택)
 ## 실무 규칙
 
 공통 로직을 고칠 때:
-- `<OMC_SOURCE>/scripts/` 또는 `<OMC_SOURCE>/templates/`를 수정
+- 원본 체크아웃에서 공통 파일을 수정
 - 대상 프로젝트에서 `python3 scripts/omc.py setup --target . --force`로 동기화
 - `omc_doctor.py --target .`로 검증
 
@@ -93,7 +68,7 @@ project_prompts/    ← 현재 프로젝트 도메인 role/profile (선택)
 - `project_prompts/` 또는 `.omc/policy.json`을 수정
 
 프로젝트 추가할 때:
-- `python <OMC_SOURCE>/scripts/omc.py setup --target /path/to/new-project`
+- [설치 안내](next_project_pack.md)에 나온 설치 명령을 실행
 - `python scripts/omc.py version --target .`으로 설치 버전과 최신성 확인
 
 ## CI/CD
