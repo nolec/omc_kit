@@ -39,6 +39,7 @@ DEPLOYED_DOCUMENTS = {
     "omc_n_child_acceptance.md",
     "omc_versioning.md",
     "omc_explicit_workflow.md",
+    "omc_quickstart.md",
     "omc_workflow.md",
     "quickstart_kr.md",
     "verification_checklist.md",

@@ -262,36 +262,39 @@ class TestSkillTemplateSsot(unittest.TestCase):
             receipt = json.loads(
                 (target / ".omc" / "install-receipt.json").read_text(encoding="utf-8")
             )
-            for rel in ("CODEX.md", "ETHOS.md", "docs/omc_quickstart.md"):
+            for rel, policy in (("CODEX.md", "managed_generated"), ("ETHOS.md", "managed_generated"),
+                                ("docs/omc_quickstart.md", "managed_exact")):
                 entry = receipt["entries"][rel]
-                self.assertEqual(entry["policy"], "managed_generated")
+                self.assertEqual(entry["policy"], policy)
                 self.assertEqual(entry["status"], "updated")
                 self.assertEqual(entry["source_sha256"], entry["target_sha256"])
 
-    def test_first_non_force_install_preserves_project_owned_generated_path(self):
+    def test_install_preserves_project_owned_quickstart(self):
         root = Path(__file__).parent.parent
         installer = root / "scripts" / "install.py"
 
-        with tempfile.TemporaryDirectory() as tmp:
-            target = Path(tmp) / "target"
-            quickstart = target / "docs" / "omc_quickstart.md"
-            quickstart.parent.mkdir(parents=True)
-            quickstart.write_text("project-owned\n", encoding="utf-8")
+        for flags in ([], ["--force"]):
+            with self.subTest(flags=flags), tempfile.TemporaryDirectory() as tmp:
+                target = Path(tmp) / "target"
+                quickstart = target / "docs" / "omc_quickstart.md"
+                quickstart.parent.mkdir(parents=True)
+                original = b"project-owned\r\n"
+                quickstart.write_bytes(original)
 
-            result = subprocess.run(
-                [sys.executable, str(installer), "--target", str(target)],
-                cwd=root,
-                capture_output=True,
-                text=True,
-                check=False,
-            )
-            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-            self.assertEqual(quickstart.read_text(encoding="utf-8"), "project-owned\n")
+                result = subprocess.run(
+                    [sys.executable, str(installer), "--target", str(target), *flags],
+                    cwd=root,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertEqual(quickstart.read_bytes(), original)
 
-            receipt = json.loads(
-                (target / ".omc" / "install-receipt.json").read_text(encoding="utf-8")
-            )
-            self.assertNotIn("docs/omc_quickstart.md", receipt["entries"])
+                receipt = json.loads(
+                    (target / ".omc" / "install-receipt.json").read_text(encoding="utf-8")
+                )
+                self.assertEqual(receipt["entries"]["docs/omc_quickstart.md"]["policy"], "preserve")
 
 
 class TestInstallManifest(unittest.TestCase):
@@ -1122,14 +1125,14 @@ class TestWrite(unittest.TestCase):
     def test_write_creates_file_with_trailing_newline(self):
         with tempfile.TemporaryDirectory() as tmp:
             dst = Path(tmp) / "out.txt"
-            _install._write(dst, "content", force=True)
+            _install._write_generated_file(dst, "content", force=True)
             self.assertEqual(dst.read_text(encoding="utf-8"), "content\n")
 
     def test_write_skips_existing_without_force(self):
         with tempfile.TemporaryDirectory() as tmp:
             dst = Path(tmp) / "out.txt"
             dst.write_text("old\n", encoding="utf-8")
-            _install._write(dst, "new", force=False)
+            _install._write_generated_file(dst, "new", force=False)
             self.assertEqual(dst.read_text(encoding="utf-8"), "old\n")
 
 
@@ -1403,6 +1406,7 @@ class TestRepositoryGitignore(unittest.TestCase):
             (kit / "docs").mkdir(parents=True)
             for name in [
                 "omc_explicit_workflow.md",
+                "omc_quickstart.md",
                 "omc_workflow.md",
                 "quickstart_kr.md",
                 "kit_map.md",

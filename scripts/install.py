@@ -42,6 +42,7 @@ AGENTS_ETHOS_MARKER = "## Engineering Ethos"
 AGENTS_LEGACY_END_MARKER = '> "PROCEED 판정입니다. 바로 플랜을 작성하겠습니다. [plan 내용 시작]..."'
 INSTALL_SOURCE_METADATA = Path(".omc") / "install-source.json"
 INSTALL_RECEIPT = Path(".omc") / "install-receipt.json"
+_QUICKSTART = "docs/omc_quickstart.md"
 _INSTALL_POLICY_ROOT: Path | None = None
 _INSTALL_POLICY_MANIFEST: dict[str, dict[str, str]] = {}
 
@@ -520,7 +521,7 @@ def _reset_install_policy_context() -> None:
     _INSTALL_POLICY_MANIFEST = {}
 
 
-def _copy(src: Path, dst: Path, *, force: bool) -> None:
+def _copy(src: Path, dst: Path, *, force: bool, verbatim: bool = False) -> None:
     if not src.exists():
         raise FileNotFoundError(src)
     rel = ""
@@ -557,7 +558,35 @@ def _copy(src: Path, dst: Path, *, force: bool) -> None:
             entry["target_sha256"] = _sha256_file(dst)
         return
     dst.parent.mkdir(parents=True, exist_ok=True)
-    dst.write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
+    if verbatim:
+        dst.write_bytes(src.read_bytes())
+    else:
+        dst.write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
+
+
+def _copy_quickstart(
+    source_kit: Path, target: Path, manifest: dict[str, dict[str, str]], *, force: bool
+) -> None:
+    """Keep project content at this path, even during a force install."""
+    dst = target / _QUICKSTART
+    if dst.is_symlink() or dst.parent.is_symlink() or (dst.exists() and not dst.is_file()):
+        manifest.pop(_QUICKSTART, None)
+        return
+    if dst.is_file():
+        previous = manifest.get(_QUICKSTART, {})
+        ownership = classify_receipt_entry_ownership(
+            {"schema_version": previous.get("previous_receipt_schema_version")},
+            _QUICKSTART,
+            previous,
+        )
+        if ownership != "exclusive_managed" or previous.get("previous_target_sha256") != _sha256_file(dst):
+            _register_preserved_output(dst)
+            return
+        if not force:
+            # Retain the prior ownership and content for a later explicit refresh.
+            previous["registered_current_install"] = True
+            return
+    _copy(source_kit / _QUICKSTART, dst, force=force, verbatim=True)
 
 
 def _install_post_commit_hook(template: Path, hook: Path, *, force: bool) -> None:
@@ -614,10 +643,6 @@ def _remove_legacy_overlay(dst: Path, marker: str) -> None:
         return
     if marker in content:
         dst.unlink()
-
-
-def _write(dst: Path, content: str, *, force: bool) -> None:
-    _write_generated_file(dst, content, force=force)
 
 
 def _write_generated_file(dst: Path, content: str, *, force: bool) -> None:
@@ -1009,7 +1034,10 @@ def _main() -> int:
         _copy(s, d, force=force)
 
     for name in sorted(DEPLOYED_DOCUMENTS):
-        _copy(source_kit / "docs" / name, tgt / "docs" / name, force=force)
+        if f"docs/{name}" == _QUICKSTART:
+            _copy_quickstart(source_kit, tgt, install_manifest, force=force)
+        else:
+            _copy(source_kit / "docs" / name, tgt / "docs" / name, force=force)
 
     _write_install_source_metadata(
         tgt,
@@ -1031,65 +1059,6 @@ def _main() -> int:
     prompt_lean = templates / "PROMPT_COMMON_LEAN.md"
     if prompt_lean.exists():
         _copy(prompt_lean, tgt / "PROMPT_COMMON_LEAN.md", force=force)
-
-    quickstart = """# OMC Kit Quickstart
-
-## Codex에서 Superpowers와 함께 시작하기
-
-이 가이드는 Superpowers로 계획·구현·검증을 진행하는 Codex 프로젝트를 기준으로 합니다. 작업 요청은 Superpowers 흐름에서 시작하고, 아래 상황에 해당할 때 OMC를 직접 호출합니다. 명령은 OMC가 설치된 프로젝트 루트에서 실행합니다.
-
-| 필요한 때 | OMC 기능 |
-|---|---|
-| 작업을 시작하거나 다시 열었을 때 | `python3 scripts/omc.py state status --target .`로 작업 상태를 조회합니다. Superpowers 계획 원장이 있으면 `--superpowers-ledger`에 경로를 지정해 마지막 완료 범위를 현재 Git 이력과 대조할 수 있습니다. |
-| 커밋 전에 다른 변경이 섞였는지 확인할 때 | `python3 scripts/omc.py scope-check --target . --expected-path scripts/example.py`로 요청 범위와 staged 경로를 비교합니다. |
-| 기존 검증에서 빠진 UI 확인 항목을 찾을 때 | Codex에서 `$omc-qa`를 호출하고 기존 테스트 결과와 실행 환경을 함께 전달합니다. |
-| 프로젝트 교훈을 찾을 때 | `python3 scripts/omc_lesson.py --target . search "키워드"`를 실행합니다. |
-
-## 현재 지원 범위
-
-OMC는 Codex Agent Skills(`.agents/skills`)와 공통 CLI를 지원합니다. Claude Code·Gemini CLI·Antigravity·Cursor 전용 설치 지원은 종료됐습니다. OMC 자동 세션·도구·Git 훅은 비활성 상태입니다.
-
-## OMC 단독 운영 예시
-
-OMC만으로 작업을 진행할 때는 Codex에서 필요한 스킬을 명시적으로 호출합니다. 요구사항이 모호하면 Superpowers의 브레인스토밍으로 범위를 정리하거나, OMC 단독 운영에서는 `$omc-office-hours`의 질문으로 시작합니다. 아래는 OMC 단독 운영 예시입니다.
-
-```text
-$omc-office-hours → $omc-plan → $omc-task → $omc-review → $omc-ship → $omc-retro
-```
-
-설치 상태와 자동화 기능의 운영 요약이 필요할 때 각각 다음 명령을 실행합니다.
-
-```bash
-python3 scripts/omc_doctor.py --target .
-python3 scripts/omc_autopilot.py overview
-```
-
-## 자주 쓰는 CLI 명령
-
-```bash
-python3 scripts/omc.py state status       # 현재 상태
-python3 scripts/omc.py state compact      # 메모리 압축
-python3 scripts/omc_lesson.py search "키워드"  # 교훈 BM25 검색
-python3 scripts/omc_autopilot.py new --id feat-x --title "기능 X"
-python3 scripts/omc.py autopilot --task-file .omc/tasks/feat-x.json --dry-run
-```
-
-## 명시적 검증 & CI
-
-자동 훅은 비활성입니다. 필요할 때 staged 변경의 TDD 게이트를 직접 실행합니다.
-
-```bash
-python3 scripts/omc_tdd_check.py --staged
-```
-
-## 파일 지도
-
-- `docs/kit_map.md` — 스크립트 전체 목록
-- `docs/quickstart_kr.md` — 시나리오별 사용 가이드
-- `docs/next_project_pack.md` — 다음 프로젝트로 이식하는 방법
-
-"""
-    _write(tgt / "docs" / "omc_quickstart.md", quickstart, force=force)
 
     # Bootstrap instructions for agentic tools.
     # 타겟에 파일이 이미 있으면 OMC 섹션만 추가, 없으면 전체 복사.
