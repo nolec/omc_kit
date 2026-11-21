@@ -6,6 +6,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 import omc_exec
 
 
@@ -21,10 +23,42 @@ def _load_module():
     return module
 
 
-def test_ambiguous_product_request_recommends_office_hours():
-    hint = _load_module().suggest_orchestration("새 서비스 아이디어의 요구사항 정리부터 도와줘")
+@pytest.mark.parametrize("request_text", [
+    "새 서비스 아이디어의 요구사항 정리부터 도와줘",
+    "Superpowers로 기능 아이디어를 정리해줘",
+    "기능 추가하려고",
+    "버튼을 추가해줘",
+    "이 기능 어떻게 구현할지 계획해줘",
+    "브레인스토밍하고 구현 계획 세워줘",
+])
+def test_general_product_requests_do_not_recommend_omc_workflow_skills(request_text):
+    hint = _load_module().suggest_orchestration(request_text)
+    assert hint["recommended_skill"] == ""
+    assert hint["response_mode"] == "answer-first"
+
+
+def test_ambiguous_product_request_recommends_office_hours_for_explicit_omc_workflow():
+    hint = _load_module().suggest_orchestration(
+        "새 서비스 아이디어의 요구사항 정리부터 도와줘", omc_workflow=True
+    )
     assert hint["recommended_skill"] == "$omc-office-hours"
     assert hint["response_mode"] == "answer-first"
+
+
+@pytest.mark.parametrize("explicit", [False, True])
+def test_installed_cli_requires_explicit_omc_workflow_for_office_hours(installed_omc_target, explicit):
+    script = installed_omc_target / "scripts/omc_role_suggest.py"
+    args = [sys.executable, "-B", str(script), "--text", "새 기능 아이디어 정리"]
+    if explicit:
+        args.append("--omc-workflow")
+    result = subprocess.run([*args, "--format", "json"], cwd=installed_omc_target, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout)["recommended_skill"] == ("$omc-office-hours" if explicit else "")
+
+    result = subprocess.run(args, cwd=installed_omc_target, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    assert ("추천 시작 스킬: $omc-office-hours" if explicit else "추천 시작 스킬: 없음") in result.stdout
+    assert ("확인하려면:" in result.stdout) == explicit
 
 
 def test_orchestration_hint_routes_review_request():
@@ -60,7 +94,7 @@ def test_orchestration_hint_routes_critical_review_wording_to_critique():
 def test_orchestration_hint_routes_plan_request():
     mod = _load_module()
 
-    hint = mod.suggest_orchestration("이 기능 어떻게 구현할지 계획해줘")
+    hint = mod.suggest_orchestration("이 기능 어떻게 구현할지 계획해줘", omc_workflow=True)
 
     assert hint["response_mode"] == "answer-first"
     assert hint["recommended_skill"] == "$omc-plan"
@@ -71,7 +105,7 @@ def test_orchestration_hint_routes_plan_request():
 def test_orchestration_hint_routes_implementation_request():
     mod = _load_module()
 
-    hint = mod.suggest_orchestration("로그인 버튼 컴포넌트 구현해줘")
+    hint = mod.suggest_orchestration("로그인 버튼 컴포넌트 구현해줘", omc_workflow=True)
 
     assert hint["response_mode"] == "execute-first"
     assert hint["recommended_skill"] == "$omc-task"
@@ -82,7 +116,7 @@ def test_orchestration_hint_routes_implementation_request():
 def test_orchestration_hint_routes_impact_and_plan_request_to_plan() -> None:
     mod = _load_module()
 
-    hint = mod.suggest_orchestration("이 변경 영향도 보고 계획까지 잡아줘")
+    hint = mod.suggest_orchestration("이 변경 영향도 보고 계획까지 잡아줘", omc_workflow=True)
 
     assert hint["response_mode"] == "answer-first"
     assert hint["recommended_skill"] == "$omc-plan"
@@ -112,7 +146,7 @@ def test_orchestration_hint_routes_plan_with_weakness_request_to_critique() -> N
 def test_orchestration_hint_routes_explicit_bug_fix_request_to_task() -> None:
     mod = _load_module()
 
-    hint = mod.suggest_orchestration("버그 수정해줘")
+    hint = mod.suggest_orchestration("버그 수정해줘", omc_workflow=True)
 
     assert hint["response_mode"] == "execute-first"
     assert hint["recommended_skill"] == "$omc-task"
@@ -122,7 +156,7 @@ def test_orchestration_hint_routes_explicit_bug_fix_request_to_task() -> None:
 def test_orchestration_hint_routes_bug_fix_with_test_addition_to_task() -> None:
     mod = _load_module()
 
-    hint = mod.suggest_orchestration("버그 수정하고 테스트 추가해줘")
+    hint = mod.suggest_orchestration("버그 수정하고 테스트 추가해줘", omc_workflow=True)
 
     assert hint["response_mode"] == "execute-first"
     assert hint["recommended_skill"] == "$omc-task"
@@ -132,7 +166,7 @@ def test_orchestration_hint_routes_bug_fix_with_test_addition_to_task() -> None:
 def test_orchestration_hint_routes_work_breakdown_request_to_plan() -> None:
     mod = _load_module()
 
-    hint = mod.suggest_orchestration("다음 1순위 작업을 더 잘게 쪼개서")
+    hint = mod.suggest_orchestration("다음 1순위 작업을 더 잘게 쪼개서", omc_workflow=True)
 
     assert hint["response_mode"] == "answer-first"
     assert hint["recommended_skill"] == "$omc-plan"
@@ -175,7 +209,7 @@ def test_orchestration_hint_prioritizes_critique_over_status_wording() -> None:
 def test_orchestration_hint_prioritizes_task_over_status_wording() -> None:
     mod = _load_module()
 
-    hint = mod.suggest_orchestration("지금 상태 확인하고 이 버그 수정해줘")
+    hint = mod.suggest_orchestration("지금 상태 확인하고 이 버그 수정해줘", omc_workflow=True)
 
     assert hint["response_mode"] == "execute-first"
     assert hint["recommended_skill"] == "$omc-task"
@@ -186,7 +220,7 @@ def test_orchestration_hint_prioritizes_task_over_status_wording() -> None:
 def test_orchestration_hint_prioritizes_plan_over_progress_summary_when_both_present() -> None:
     mod = _load_module()
 
-    hint = mod.suggest_orchestration("지금까지 뭐 했는지 정리하고 다음 작업 계획해줘")
+    hint = mod.suggest_orchestration("지금까지 뭐 했는지 정리하고 다음 작업 계획해줘", omc_workflow=True)
 
     assert hint["response_mode"] == "answer-first"
     assert hint["recommended_skill"] == "$omc-plan"
@@ -241,7 +275,7 @@ def test_orchestration_hint_routes_plan_gate_explanation_request_to_critique() -
 def test_orchestration_hint_prioritizes_task_over_progress_summary_when_both_present() -> None:
     mod = _load_module()
 
-    hint = mod.suggest_orchestration("지금까지 뭐 했는지 정리하고 버그 수정해줘")
+    hint = mod.suggest_orchestration("지금까지 뭐 했는지 정리하고 버그 수정해줘", omc_workflow=True)
 
     assert hint["response_mode"] == "execute-first"
     assert hint["recommended_skill"] == "$omc-task"
@@ -275,8 +309,7 @@ def test_orchestration_hint_routes_operator_experience_finish_request_to_plan() 
     mod = _load_module()
 
     hint = mod.suggest_orchestration(
-        "plan/task/review 흐름을 더 똑똑하게 하고 next-action 품질, reroute, output bloat, 과다 단계 진입 같은 사용감 개선 마무리하자"
-    )
+        "plan/task/review 흐름을 더 똑똑하게 하고 next-action 품질, reroute, output bloat, 과다 단계 진입 같은 사용감 개선 마무리하자", omc_workflow=True)
 
     assert hint["response_mode"] == "answer-first"
     assert hint["recommended_skill"] == "$omc-plan"
@@ -287,7 +320,7 @@ def test_orchestration_hint_routes_operator_experience_finish_request_to_plan() 
 def test_orchestration_hint_routes_roadmap_next_work_question_to_plan() -> None:
     mod = _load_module()
 
-    hint = mod.suggest_orchestration("현재 로드맵 기준으로 다음 작업 뭐지")
+    hint = mod.suggest_orchestration("현재 로드맵 기준으로 다음 작업 뭐지", omc_workflow=True)
 
     assert hint["response_mode"] == "answer-first"
     assert hint["recommended_skill"] == "$omc-plan"
@@ -298,7 +331,7 @@ def test_orchestration_hint_routes_roadmap_next_work_question_to_plan() -> None:
 def test_orchestration_hint_routes_remaining_roadmap_work_question_to_plan() -> None:
     mod = _load_module()
 
-    hint = mod.suggest_orchestration("로드맵 기준 어떤 작업들이 남은거야")
+    hint = mod.suggest_orchestration("로드맵 기준 어떤 작업들이 남은거야", omc_workflow=True)
 
     assert hint["response_mode"] == "answer-first"
     assert hint["recommended_skill"] == "$omc-plan"
@@ -309,7 +342,7 @@ def test_orchestration_hint_routes_remaining_roadmap_work_question_to_plan() -> 
 def test_orchestration_hint_prioritizes_task_over_roadmap_next_work_question() -> None:
     mod = _load_module()
 
-    hint = mod.suggest_orchestration("현재 로드맵 기준으로 다음 작업 구현해줘")
+    hint = mod.suggest_orchestration("현재 로드맵 기준으로 다음 작업 구현해줘", omc_workflow=True)
 
     assert hint["response_mode"] == "execute-first"
     assert hint["recommended_skill"] == "$omc-task"

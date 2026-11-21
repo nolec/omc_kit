@@ -4,7 +4,7 @@ omc_role_suggest.py — 요청 텍스트를 분석해 OMC 역할을 추천하고
 AI 대화 흐름에서 바로 붙여넣을 수 있는 출력을 생성합니다.
 
 사용:
-  python3 scripts/omc_role_suggest.py "기능 추가하고 싶어"
+  python3 scripts/omc_role_suggest.py --omc-workflow "새 기능 아이디어 정리"
   python3 scripts/omc_role_suggest.py --text "버그 수정" --top 3 --format plain
   python3 scripts/omc_role_suggest.py --text "배포 준비" --format json
 """
@@ -208,7 +208,19 @@ def suggest(text: str, top: int = 3, target: Path | None = None) -> list[RoleSug
     return _score(text, roles)[:top]
 
 
-def suggest_orchestration(text: str, *, target: Path | None = None) -> dict[str, str]:
+def suggest_orchestration(
+    text: str, *, target: Path | None = None, omc_workflow: bool = False
+) -> dict[str, str]:
+    hint = _classify_orchestration(text, target=target)
+    if not omc_workflow and hint["recommended_skill"] in {
+        "$omc-office-hours", "$omc-plan", "$omc-task",
+    }:
+        hint["response_mode"] = "answer-first"
+        hint["recommended_skill"] = ""
+    return hint
+
+
+def _classify_orchestration(text: str, *, target: Path | None = None) -> dict[str, str]:
     normalized = _normalize(text)
     suggestions = suggest(text, top=3, target=target)
     primary_role = suggestions[0].role_id if suggestions else "senior_coding"
@@ -442,31 +454,35 @@ def suggest_orchestration(text: str, *, target: Path | None = None) -> dict[str,
 # 출력 포맷터
 # ---------------------------------------------------------------------------
 
-def _fmt_plain(suggestions: list[RoleSuggestion], text: str) -> str:
-    orchestration = suggest_orchestration(text)
+def _fmt_plain(suggestions: list[RoleSuggestion], text: str, *, omc_workflow: bool = False) -> str:
+    orchestration = suggest_orchestration(text, omc_workflow=omc_workflow)
     lines = [f'📌 요청 분석: "{text[:60]}{"..." if len(text) > 60 else ""}"', ""]
     lines.append("🤖 추천 역할:")
     for i, s in enumerate(suggestions, 1):
         kws = f"  (매칭: {', '.join(s.matched_keywords[:3])})" if s.matched_keywords else ""
         lines.append(f"  {i}. [{s.role_id}] {s.title}{kws}")
         lines.append(f"     → {s.description}")
+    skill = orchestration["recommended_skill"]
     lines += [
         "",
         f"🧭 추천 모드: {orchestration['response_mode']}",
-        f"🧩 추천 시작 스킬: {orchestration['recommended_skill']}",
+        f"🧩 추천 시작 스킬: {skill or '없음'}",
         f"🎯 주역할: {orchestration['primary_role']}",
         f"🧠 task kind 힌트: {orchestration['task_kind_hint']}",
         f"⚖️ 라우팅 정책: {orchestration['routing_policy']}",
-        "",
-        "─" * 48,
-        "확인하려면: 확인 (또는 +role_id, -role_id 로 조정)",
-        "역할 변경:  senior_coding,analysis  (쉼표로 직접 지정)",
     ]
+    if skill:
+        lines += [
+            "",
+            "─" * 48,
+            "확인하려면: 확인 (또는 +role_id, -role_id 로 조정)",
+            "역할 변경:  senior_coding,analysis  (쉼표로 직접 지정)",
+        ]
     return "\n".join(lines)
 
 
-def _fmt_json(suggestions: list[RoleSuggestion], text: str) -> str:
-    orchestration = suggest_orchestration(text)
+def _fmt_json(suggestions: list[RoleSuggestion], text: str, *, omc_workflow: bool = False) -> str:
+    orchestration = suggest_orchestration(text, omc_workflow=omc_workflow)
     return json.dumps(
         {
             "suggestions": [
@@ -498,6 +514,7 @@ def main() -> int:
     ap.add_argument("--text", dest="text_flag", default=None, help="분석할 요청 텍스트 (플래그)")
     ap.add_argument("--top", type=int, default=3, help="추천 역할 수 (기본: 3)")
     ap.add_argument("--target", type=Path, default=Path.cwd(), help="프로젝트 루트 (team.json 탐색 기준)")
+    ap.add_argument("--omc-workflow", action="store_true", help="사용자가 명시적으로 OMC 작업 흐름을 선택한 경우 지정")
     ap.add_argument(
         "--format",
         choices=["plain", "json", "ids"],
@@ -521,11 +538,11 @@ def main() -> int:
     results = suggest(text, top=args.top, target=args.target)
 
     if args.format == "json":
-        print(_fmt_json(results, text))
+        print(_fmt_json(results, text, omc_workflow=args.omc_workflow))
     elif args.format == "ids":
         print(_fmt_ids(results))
     else:
-        print(_fmt_plain(results, text))
+        print(_fmt_plain(results, text, omc_workflow=args.omc_workflow))
 
     return 0
 

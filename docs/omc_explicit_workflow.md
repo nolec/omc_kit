@@ -179,13 +179,15 @@ $omc-plan → $omc-task → $omc-review → $omc-ship → $omc-retro
 
 **사용자가 OMC 역할 추천을 포함한 작업을 명시적으로 선택하면 아래 흐름을 따릅니다.**
 
+사용자가 OMC 흐름을 선택했을 때만 `--omc-workflow`를 지정합니다. 옵션을 생략한 추천에서 Office Hours·계획·구현이 후보라면 시작 스킬을 표시하지 않습니다. JSON의 `recommended_skill`은 빈 문자열입니다.
+
 #### 플로우
 
 ```
 1. 요청 수신
    ↓
 2. 역할 자동 추천 (스크립트 또는 인라인 분석)
-   python3 scripts/omc_role_suggest.py "[요청 텍스트]"
+   python3 scripts/omc_role_suggest.py --omc-workflow "[요청 텍스트]"
    ↓
 3. 추천 역할 출력 + 컨펌 요청
    예:

@@ -246,3 +246,12 @@ def test_office_hours_skill_declares_lite_to_full_escalation_rule():
     ]
     missing = [marker for marker in required if marker not in text]
     assert not missing, f"missing lite->full escalation markers: {missing}"
+
+
+def test_office_hours_frontmatter_requires_explicit_omc_selection() -> None:
+    for path in REQUIRED_OFFICE_HOURS_SKILL_PATHS:
+        frontmatter = path.read_text(encoding="utf-8").split("---", 2)[1]
+        assert "$omc-office-hours" in frontmatter
+        assert "OMC 작업 흐름을 명시적으로 선택" in frontmatter
+        assert "기능 추가하려고" not in frontmatter
+        assert "만들어볼게" not in frontmatter
