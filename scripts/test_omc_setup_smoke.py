@@ -92,9 +92,14 @@ def main() -> int:
             "scripts/omc_domain.py",
             "scripts/omc_doctor.py",
             "scripts/omc_chat.py",
-            "docs/verification_checklist.md",
+            "docs/omc_quickstart.md",
         ]:
             _assert_exists(project_root / rel)
+
+        for name in ("agent_behavior.md", "omc_n_child_acceptance.md", "verification_checklist.md"):
+            _assert_exists(repo_root / "docs" / name)
+            if (project_root / "docs" / name).exists():
+                raise SystemExit(f"source-only document was installed: {name}")
 
         install_source = project_root / ".omc" / "install-source.json"
         _assert_exists(install_source)

@@ -32,16 +32,18 @@ DEPLOYED_SCRIPT_EXTRAS = {
     "omc.py",
 }
 DEPLOYED_DOCUMENTS = {
-    "agent_behavior.md",
     "kit_map.md",
     "next_project_pack.md",
     "omc_quality_gates.md",
-    "omc_n_child_acceptance.md",
     "omc_versioning.md",
     "omc_explicit_workflow.md",
     "omc_quickstart.md",
     "omc_workflow.md",
     "quickstart_kr.md",
+}
+SOURCE_ONLY_DOCUMENTS = {
+    "agent_behavior.md",
+    "omc_n_child_acceptance.md",
     "verification_checklist.md",
 }
 DEPLOYED_PROMPTS = {

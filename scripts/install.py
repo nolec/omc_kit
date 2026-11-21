@@ -21,6 +21,7 @@ from omc_source_hash import (
     DEPLOYED_DOCUMENTS,
     DEPLOYED_PROMPTS,
     DEPLOYED_SCRIPT_EXTRAS as _SCRIPTS_EXTRA,
+    SOURCE_ONLY_DOCUMENTS,
     is_deployed_script_name,
     source_sha256 as _source_sha256,
 )
@@ -420,13 +421,14 @@ def _finalize_install_manifest(target: Path, manifest: dict[str, dict[str, str]]
     return manifest
 
 
-def _retain_previous_pr_create(
+def _retain_previous_optional_outputs(
     target: Path, manifest: dict[str, dict[str, str]]
 ) -> None:
-    """Keep the optional skill out of retirement cleanup on reinstall."""
+    """Preserve previously installed optional or source-only files on reinstall."""
     for rel, entry in list(manifest.items()):
         relative = Path(rel)
-        if not relative.is_relative_to(_PR_CREATE_SKILL):
+        source_only_doc = relative.parent == Path("docs") and relative.name in SOURCE_ONLY_DOCUMENTS
+        if not source_only_doc and not relative.is_relative_to(_PR_CREATE_SKILL):
             continue
         installed = target / relative
         if not installed.is_file() or any(
@@ -1164,7 +1166,7 @@ def _main() -> int:
     # ── Cursor project hooks (optional, when template files exist) ───────────
     # ── Codex skills: templates/.agents/skills is the sole source ──
     # Single source of truth: templates/.agents/skills/
-    _retain_previous_pr_create(tgt, install_manifest)
+    _retain_previous_optional_outputs(tgt, install_manifest)
     agent_skills_src = templates / ".agents" / "skills"
     if agent_skills_src.exists():
         for src in agent_skills_src.rglob("*"):
