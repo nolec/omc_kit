@@ -6,18 +6,33 @@ from test_omc_output_contract import detached_case
 ROOT = Path(__file__).resolve().parents[1]
 TEMPLATES = ROOT / 'templates'
 
-def test_codex_autopilot_contains_pipeline():
-    assert 'pipeline' in (TEMPLATES / '.codex/commands/omc-commands.md').read_text()
+def test_deployed_codex_command_reference_links_to_guides(installed_omc_target):
+    relative = Path('.codex/commands/omc-commands.md')
+    installed = installed_omc_target / relative
+    assert installed.read_bytes() == (TEMPLATES / relative).read_bytes() == (ROOT / relative).read_bytes()
+
+    text = installed.read_text(encoding='utf-8')
+    for guide in ('omc_quickstart.md', 'omc_explicit_workflow.md'):
+        link = f'../../docs/{guide}'
+        assert f']({link})' in text
+        assert (installed.parent / link).is_file()
+    assert '일반 작업은 Superpowers' in text
+    assert 'OMC 작업 흐름을 명시적으로 선택' in text
+    assert '암묵적 트리거' not in text
+
 
 def test_deployed_codex_plan_matches_template(installed_omc_target):
     relative = '.agents/skills/omc-plan/SKILL.md'
     assert (installed_omc_target / relative).read_bytes() == (TEMPLATES / relative).read_bytes(), 'deployed Codex plan differs from template'
 
-def test_templates_include_pipeline_status():
-    assert 'pipeline-status' in (TEMPLATES / '.codex/commands/omc-commands.md').read_text()
 
-def test_deployed_include_pipeline_status(installed_omc_target):
-    assert 'pipeline-status' in (installed_omc_target / '.codex/commands/omc-commands.md').read_text()
+def test_deployed_autopilot_skill_documents_pipeline_commands(installed_omc_target):
+    relative = Path('.agents/skills/omc-autopilot/SKILL.md')
+    installed = installed_omc_target / relative
+    assert installed.read_bytes() == (TEMPLATES / relative).read_bytes()
+    text = installed.read_text(encoding='utf-8')
+    assert 'scripts/omc_autopilot.py pipeline ' in text
+    assert 'scripts/omc_autopilot.py pipeline-status' in text
 
 
 @pytest.mark.parametrize('verdict',['APPROVE WITH NOTES','REVISE'])
