@@ -12,10 +12,10 @@ sys.path.insert(0, str(ROOT / 'scripts'))
 import omc_doctor
 
 
-def install(target, force=False):
+def install(target, force=False, *, with_pr_create=False):
     result = subprocess.run(
         [sys.executable, '-B', str(ROOT / 'scripts/install.py'), '--target', str(target)]
-        + (['--force'] if force else []),
+        + (['--force'] if force else []) + (['--with-pr-create'] if with_pr_create else []),
         cwd=ROOT, capture_output=True, text=True,
         env={**os.environ, 'GIT_OPTIONAL_LOCKS': '0'},
     )
@@ -34,6 +34,57 @@ def test_fresh_install_is_codex_only(fresh):
     assert (fresh / 'scripts/omc.py').is_file()
     for name in ['.claude', '.gemini', '.cursor', '.agent', '.cursorignore', 'CLAUDE.md', 'GEMINI.md']:
         assert not (fresh / name).exists(), name
+
+
+PR_CREATE = Path('.agents/skills/pr-create')
+PR_CREATE_FILES = ('SKILL.md', 'agents/openai.yaml')
+
+
+def test_pr_create_is_not_installed_by_default(fresh):
+    assert not (fresh / PR_CREATE).exists()
+    receipt = json.loads((fresh / '.omc/install-receipt.json').read_text())
+    assert not any(path.startswith(f'{PR_CREATE}/') for path in receipt['entries'])
+    result = subprocess.run(
+        [sys.executable, '-B', str(fresh / 'scripts/omc_skill_check.py'), 'omc-ship'],
+        cwd=fresh, capture_output=True, text=True,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.mark.parametrize('entrypoint', ['installer', 'setup'])
+def test_pr_create_can_be_installed_explicitly(tmp_path, entrypoint):
+    if entrypoint == 'installer':
+        install(tmp_path, with_pr_create=True)
+    else:
+        result = subprocess.run(
+            [sys.executable, '-B', str(ROOT / 'scripts/omc.py'), 'setup', '--target',
+             str(tmp_path), '--with-pr-create'],
+            cwd=ROOT, capture_output=True, text=True,
+            env={**os.environ, 'OMC_INSTALLATION_REGISTRY_DIR': str(tmp_path / 'registry')},
+        )
+        assert result.returncode == 0, result.stdout + result.stderr
+    for name in PR_CREATE_FILES:
+        relative = PR_CREATE / name
+        assert (tmp_path / relative).read_bytes() == (ROOT / 'templates' / relative).read_bytes()
+    receipt = json.loads((tmp_path / '.omc/install-receipt.json').read_text())
+    assert all(receipt['entries'][str(PR_CREATE / name)]['policy'] == 'managed_exact'
+               for name in PR_CREATE_FILES)
+
+
+@pytest.mark.parametrize('force, with_pr_create', [(False, False), (True, False), (True, True)])
+def test_reinstall_keeps_existing_pr_create_files(tmp_path, force, with_pr_create):
+    install(tmp_path, with_pr_create=True)
+    skill = tmp_path / PR_CREATE / 'SKILL.md'
+    skill.write_bytes(skill.read_bytes() + b'\n# Project instructions\n')
+    expected = {name: (tmp_path / PR_CREATE / name).read_bytes() for name in PR_CREATE_FILES}
+
+    install(tmp_path, force=force, with_pr_create=with_pr_create)
+
+    for name, data in expected.items():
+        assert (tmp_path / PR_CREATE / name).read_bytes() == data
+    receipt = json.loads((tmp_path / '.omc/install-receipt.json').read_text())
+    assert receipt['entries'][str(PR_CREATE / 'SKILL.md')]['policy'] == 'preserve'
+    assert receipt['entries'][str(PR_CREATE / 'agents/openai.yaml')]['policy'] == 'managed_exact'
 
 
 def test_automatic_hooks_stay_disabled(fresh):

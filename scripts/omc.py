@@ -238,6 +238,7 @@ def main() -> int:
     setup = sub.add_parser("setup", help="Install the kit into the current or target project.")
     setup.add_argument("--target", type=Path, default=Path.cwd(), help="Target repository root.")
     setup.add_argument("--force", action="store_true", help="Overwrite existing files.")
+    setup.add_argument("--with-pr-create", action="store_true", help="Install the optional pr-create skill.")
     setup.add_argument(
         "--skip-session-start",
         action="store_true",
@@ -747,7 +748,12 @@ def main() -> int:
             )
             if cohort_v2_preflight_code != 0:
                 raise SystemExit(cohort_v2_preflight_code)
-        install_code = _run_script(install, ["--target", str(target), *(["--force"] if args.force else [])])
+        install_args = ["--target", str(target)]
+        if args.force:
+            install_args.append("--force")
+        if args.with_pr_create:
+            install_args.append("--with-pr-create")
+        install_code = _run_script(install, install_args)
         if install_code != 0:
             raise SystemExit(install_code)
         init_code = _run_script(init_state, ["init", "--target", str(target), *(["--force"] if args.force else [])])

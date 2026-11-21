@@ -43,6 +43,7 @@ AGENTS_LEGACY_END_MARKER = '> "PROCEED 판정입니다. 바로 플랜을 작성�
 INSTALL_SOURCE_METADATA = Path(".omc") / "install-source.json"
 INSTALL_RECEIPT = Path(".omc") / "install-receipt.json"
 _QUICKSTART = "docs/omc_quickstart.md"
+_PR_CREATE_SKILL = Path(".agents/skills/pr-create")
 _INSTALL_POLICY_ROOT: Path | None = None
 _INSTALL_POLICY_MANIFEST: dict[str, dict[str, str]] = {}
 
@@ -417,6 +418,27 @@ def _finalize_install_manifest(target: Path, manifest: dict[str, dict[str, str]]
             entry["source_sha256"] = digest
             entry["target_sha256"] = digest
     return manifest
+
+
+def _retain_previous_pr_create(
+    target: Path, manifest: dict[str, dict[str, str]]
+) -> None:
+    """Keep the optional skill out of retirement cleanup on reinstall."""
+    for rel, entry in list(manifest.items()):
+        relative = Path(rel)
+        if not relative.is_relative_to(_PR_CREATE_SKILL):
+            continue
+        installed = target / relative
+        if not installed.is_file() or any(
+            (target / parent).is_symlink() for parent in (relative, *relative.parents)
+        ):
+            manifest.pop(rel)
+            continue
+        digest = entry["target_sha256"]
+        if digest == entry["previous_target_sha256"] == entry["source_sha256"]:
+            entry["registered_current_install"] = True
+        else:
+            _register_preserved_output(installed)
 
 
 def _prune_stale_managed_outputs(
@@ -968,6 +990,7 @@ def _main() -> int:
     ap = argparse.ArgumentParser(description="Install OMC kit into a target repository.")
     ap.add_argument("--target", type=Path, required=True, help="Target repository root.")
     ap.add_argument("--force", action="store_true", help="Overwrite existing files.")
+    ap.add_argument("--with-pr-create", action="store_true", help="Install the optional pr-create skill.")
     ap.add_argument(
         "--auto-update",
         action="store_true",
@@ -1141,15 +1164,21 @@ def _main() -> int:
     # ── Cursor project hooks (optional, when template files exist) ───────────
     # ── Codex skills: templates/.agents/skills is the sole source ──
     # Single source of truth: templates/.agents/skills/
+    _retain_previous_pr_create(tgt, install_manifest)
     agent_skills_src = templates / ".agents" / "skills"
     if agent_skills_src.exists():
         for src in agent_skills_src.rglob("*"):
             if not src.is_file():
                 continue
             rel = src.relative_to(agent_skills_src)
-            for base in (".agents",):
-                dst = tgt / base / "skills" / rel
-                _copy(src, dst, force=force)
+            relative = Path(".agents/skills") / rel
+            dst = tgt / relative
+            if relative.is_relative_to(_PR_CREATE_SKILL):
+                if not args.with_pr_create or dst.exists() or any(
+                    (tgt / parent).is_symlink() for parent in (relative, *relative.parents)
+                ):
+                    continue
+            _copy(src, dst, force=force)
 
     # ── .omc/lessons/ — Compound Engineering 교훈 디렉토리 ──────────────────
     lessons_dir = tgt / ".omc" / "lessons"
