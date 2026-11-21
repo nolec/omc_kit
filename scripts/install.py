@@ -993,6 +993,8 @@ def _main() -> int:
     ap.add_argument("--target", type=Path, required=True, help="Target repository root.")
     ap.add_argument("--force", action="store_true", help="Overwrite existing files.")
     ap.add_argument("--with-pr-create", action="store_true", help="Install the optional pr-create skill.")
+    ap.add_argument("--with-research-tasks", action="store_true", help="Install bundled research task definitions.")
+    ap.add_argument("--with-shared-lessons", action="store_true", help="Install bundled shared lessons.")
     ap.add_argument(
         "--auto-update",
         action="store_true",
@@ -1203,13 +1205,15 @@ def _main() -> int:
     print(f"Installed OMC kit into: {tgt}")
 
     _setup_ethos_section5(tgt)
+    migrate_tasks = force and migrate_shared_tasks
     _install_shared_tasks(
         source_kit,
         tgt,
-        force=force,
-        migrate=migrate_shared_tasks,
+        enabled=args.with_research_tasks or migrate_tasks,
+        force=migrate_tasks,
+        migrate=migrate_tasks,
     )
-    _install_shared_lessons(source_kit, tgt)
+    _install_shared_lessons(source_kit, tgt, enabled=args.with_shared_lessons)
 
     apply_finished = time.perf_counter()
     receipt_started = time.perf_counter()
@@ -1413,7 +1417,7 @@ def _setup_ethos_section5(tgt: "Path") -> None:
 
 
 
-def _install_shared_lessons(kit: Path, tgt: Path) -> None:
+def _install_shared_lessons(kit: Path, tgt: Path, *, enabled: bool = True) -> None:
     """templates/shared_lessons/ 에 있는 교훈 파일을 .omc/lessons/ 에 복사한다.
 
     이미 존재하는 파일은 덮어쓰지 않아 프로젝트 고유 교훈을 보호한다.
@@ -1427,15 +1431,22 @@ def _install_shared_lessons(kit: Path, tgt: Path) -> None:
     if not candidates:
         return
 
-    lessons_dir.mkdir(parents=True, exist_ok=True)
+    if lessons_dir.is_symlink() or lessons_dir.parent.is_symlink():
+        return
+    if enabled:
+        lessons_dir.mkdir(parents=True, exist_ok=True)
 
     copied = 0
     skipped = 0
     for src in candidates:
         dst = lessons_dir / src.name
+        if dst.is_symlink():
+            continue
         if dst.exists():
             _register_preserved_output(dst)
             skipped += 1
+            continue
+        if not enabled:
             continue
         _copy(src, dst, force=True)
         copied += 1
@@ -1451,6 +1462,7 @@ def _install_shared_tasks(
     kit: Path,
     tgt: Path,
     *,
+    enabled: bool = True,
     force: bool = False,
     migrate: bool = False,
 ) -> None:
@@ -1469,14 +1481,19 @@ def _install_shared_tasks(
     if not candidates:
         return
 
-    tasks_dir.mkdir(parents=True, exist_ok=True)
+    if tasks_dir.is_symlink() or tasks_dir.parent.is_symlink():
+        return
+    if enabled:
+        tasks_dir.mkdir(parents=True, exist_ok=True)
 
     copied = 0
     skipped = 0
     for src in candidates:
         dst = tasks_dir / src.name
+        if dst.is_symlink():
+            continue
         if dst.exists():
-            if not force:
+            if not enabled or not force:
                 _register_preserved_output(dst)
                 skipped += 1
                 continue
@@ -1505,6 +1522,8 @@ def _install_shared_tasks(
                 _register_preserved_output(dst)
                 skipped += 1
                 continue
+        if not enabled:
+            continue
         _copy(src, dst, force=True)
         copied += 1
 

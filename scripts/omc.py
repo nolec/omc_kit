@@ -239,6 +239,8 @@ def main() -> int:
     setup.add_argument("--target", type=Path, default=Path.cwd(), help="Target repository root.")
     setup.add_argument("--force", action="store_true", help="Overwrite existing files.")
     setup.add_argument("--with-pr-create", action="store_true", help="Install the optional pr-create skill.")
+    setup.add_argument("--with-research-tasks", action="store_true", help="Install bundled research task definitions.")
+    setup.add_argument("--with-shared-lessons", action="store_true", help="Install bundled shared lessons.")
     setup.add_argument(
         "--skip-session-start",
         action="store_true",
@@ -753,6 +755,10 @@ def main() -> int:
             install_args.append("--force")
         if args.with_pr_create:
             install_args.append("--with-pr-create")
+        if args.with_research_tasks:
+            install_args.append("--with-research-tasks")
+        if args.with_shared_lessons:
+            install_args.append("--with-shared-lessons")
         install_code = _run_script(install, install_args)
         if install_code != 0:
             raise SystemExit(install_code)

@@ -52,11 +52,12 @@ def prepare_task_path(
     task_id: str,
     ordinal: int,
     unique_runtime_task: bool,
+    payload: dict[str, object] | None = None,
 ) -> Path:
     source = _task_path(root, task_id)
     if not unique_runtime_task:
         return source
-    payload = json.loads(source.read_text(encoding="utf-8"))
+    payload = json.loads(source.read_text(encoding="utf-8")) if payload is None else payload.copy()
     runtime_id = f"{task_id}-batch-{ordinal:03d}"
     payload["id"] = runtime_id
     title = str(payload.get("title") or task_id).strip()
@@ -75,16 +76,38 @@ def run_plan(*, root: Path, task_ids: list[str], dry_run: bool, unique_runtime_t
     if dry_run:
         return 0
 
-    for index, task_id in enumerate(task_ids, start=1):
+    task_order = list(dict.fromkeys(task_ids))
+    tasks: dict[str, dict[str, object]] = {}
+    missing_task = False
+    for task_id in task_order:
         task_path = _task_path(root, task_id)
-        if not task_path.exists():
+        try:
+            if not task_path.is_file():
+                if not task_path.exists():
+                    raise FileNotFoundError(task_path)
+                raise ValueError("expected a regular file")
+            payload = json.loads(task_path.read_text(encoding="utf-8"))
+            if not isinstance(payload, dict):
+                raise ValueError("expected a JSON object")
+        except FileNotFoundError:
             print(f"[BATCH] missing task: {task_path}")
-            return 1
+            missing_task = True
+        except (OSError, ValueError) as error:
+            print(f"[BATCH] unreadable or invalid task: {task_path} ({error})")
+        else:
+            tasks[task_id] = payload
+    if missing_task:
+        print("[BATCH] Install bundled definitions with --with-research-tasks, or supply the missing task files.")
+    if len(tasks) != len(task_order):
+        return 1
+
+    for index, task_id in enumerate(task_ids, start=1):
         task_path = prepare_task_path(
             root=root,
             task_id=task_id,
             ordinal=index,
             unique_runtime_task=unique_runtime_tasks,
+            payload=tasks[task_id],
         )
         print(f"\n[BATCH] ({index}/{len(task_ids)}) running {task_id}")
         proc = subprocess.run(

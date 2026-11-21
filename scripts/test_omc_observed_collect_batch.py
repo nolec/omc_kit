@@ -137,3 +137,23 @@ def test_run_plan_stops_on_failure(tmp_path: Path) -> None:
 
     assert code == 1
     assert len(calls) == 2
+
+
+def test_run_plan_checks_every_task_before_launch(tmp_path: Path, capsys) -> None:
+    tasks_dir = tmp_path / ".omc" / "tasks"
+    tasks_dir.mkdir(parents=True)
+    (tasks_dir / "valid.json").write_text("{}", encoding="utf-8")
+    (tasks_dir / "broken.json").write_text("{broken", encoding="utf-8")
+    (tasks_dir / "directory.json").mkdir()
+
+    with patch.object(omc_observed_collect_batch.subprocess, "run") as launch:
+        code = omc_observed_collect_batch.run_plan(
+            root=tmp_path, task_ids=["valid", "missing", "broken", "directory"], dry_run=False
+        )
+
+    assert code == 1
+    launch.assert_not_called()
+    assert not (tasks_dir / "_runtime").exists()
+    output = capsys.readouterr().out
+    assert all(name in output for name in ("missing.json", "broken.json", "directory.json"))
+    assert "--with-research-tasks" in output

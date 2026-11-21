@@ -87,6 +87,64 @@ def test_reinstall_keeps_existing_pr_create_files(tmp_path, force, with_pr_creat
     assert receipt['entries'][str(PR_CREATE / 'agents/openai.yaml')]['policy'] == 'managed_exact'
 
 
+SEED_OPTIONS = {
+    '--with-research-tasks': ('shared_tasks', '.omc/tasks', '*.json'),
+    '--with-shared-lessons': ('shared_lessons', '.omc/lessons', '*.md'),
+}
+
+
+def _seed_files(option):
+    template, destination, pattern = SEED_OPTIONS[option]
+    return {Path(destination) / p.name: p.read_bytes()
+            for p in (ROOT / 'templates' / template).glob(pattern)}
+
+
+def _install_seeds(target, *flags, setup=False):
+    command = ['scripts/omc.py', 'setup'] if setup else ['scripts/install.py']
+    result = subprocess.run(
+        [sys.executable, '-B', *command, '--target', str(target), *flags],
+        cwd=ROOT, capture_output=True, text=True,
+        env={**os.environ, 'OMC_INSTALLATION_REGISTRY_DIR': str(target.parent / 'registry')},
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_default_install_excludes_bundled_tasks_and_lessons(fresh):
+    assert not list((fresh / '.omc/tasks').glob('*.json'))
+    assert not list((fresh / '.omc/lessons').glob('*.md'))
+    receipt = json.loads((fresh / '.omc/install-receipt.json').read_text())
+    assert all(str(path) not in receipt['entries'] for option in SEED_OPTIONS for path in _seed_files(option))
+
+
+@pytest.mark.parametrize('setup', [False, True])
+@pytest.mark.parametrize('option', SEED_OPTIONS)
+def test_seed_options_are_independent(tmp_path, setup, option):
+    target = tmp_path / 'project'
+    _install_seeds(target, option, setup=setup)
+    expected = _seed_files(option)
+    deployed = {p.relative_to(target): p.read_bytes()
+                for _, destination, pattern in SEED_OPTIONS.values()
+                for p in (target / destination).glob(pattern)}
+    assert deployed == expected
+    receipt = json.loads((target / '.omc/install-receipt.json').read_text())
+    assert all(receipt['entries'][str(path)]['policy'] == 'managed_exact' for path in expected)
+
+
+@pytest.mark.parametrize('flags', [(), ('--force',), ('--force', *SEED_OPTIONS)])
+def test_reinstall_preserves_seed_files_and_receipt_entries(tmp_path, flags):
+    _install_seeds(tmp_path, *SEED_OPTIONS)
+    paths = [path for option in SEED_OPTIONS for path in _seed_files(option)]
+    task = tmp_path / '.omc/tasks/observed-collect.json'
+    task.write_bytes(task.read_bytes() + b'\n')
+    before = {path: (tmp_path / path).read_bytes() for path in paths}
+
+    for _ in range(2):
+        _install_seeds(tmp_path, *flags)
+        receipt = json.loads((tmp_path / '.omc/install-receipt.json').read_text())
+        assert all((tmp_path / path).read_bytes() == content for path, content in before.items())
+        assert all(receipt['entries'][str(path)]['status'] == 'preserved' for path in paths)
+
+
 def test_automatic_hooks_stay_disabled(fresh):
     for name in ['.codex/hooks.json', '.omc/hooks.json']:
         data = json.loads((fresh / name).read_text())
