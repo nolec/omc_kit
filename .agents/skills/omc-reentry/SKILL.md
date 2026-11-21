@@ -9,13 +9,10 @@ description: "오랜만에 돌아온 프로젝트를 빠르게 파악하는 복�
 
 ## Phase 0. 수집
 
-```bash
-# 문서 우선
-README / ETHOS.md / AGENTS.md
-git status -sb
-git log --oneline -5
-python3 scripts/omc.py state status --target .
-```
+1. 문서 우선으로 README, ETHOS.md, AGENTS.md와 실행·검증 진입점을 확인합니다.
+2. 복귀 판단에 작업 상태가 필요하면 같은 저장소에서 작업 트리와 세션 상태가 바뀌기 전에 얻은 `state status` 결과를 재사용합니다. 현재 결과가 없으면 OMC 설치본에서 `python3 scripts/omc.py state status --target .`를 실행합니다.
+3. 종료 코드가 0이어도 필요한 항목이 실제로 출력됐는지 확인합니다. OMC 미설치·조회 실패·항목 누락으로 Git 정보가 더 필요할 때만 기존 Git 결과를 재사용하거나 `GIT_OPTIONAL_LOCKS=0 git -c core.fsmonitor=false status --short --branch --untracked-files=all`로 보완합니다. 확인 불가인 OMC 세션은 따로 표시합니다.
+4. 프로젝트의 최근 변경 맥락이 기존 결과에 없으면 `GIT_OPTIONAL_LOCKS=0 git -c core.fsmonitor=false log --oneline -5`로 확인합니다.
 
 사용자에게 보여줄 것: 프로젝트 한 줄 요약 / 핵심 구조 / 실행/검증 진입점 / 주의할 SSOT/금지 경로 / 최근 작업 흔적 / 다음 읽을 파일 3개 / 추천 다음 스킬
 시스템이 암묵적으로 처리: 문서 기준과 현재 상태 기준을 분리, 문서 우선 후 git/OMC 상태 보강, OMC 미설치 fallback

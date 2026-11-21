@@ -24,12 +24,16 @@ OPTIONAL_STATUS_SKILL_PATHS = [
 
 REQUIRED_SEQUENCE = [
     "조회 전용",
+    "같은 저장소",
+    "재사용",
     "python3 scripts/omc.py state status --target .",
-    "cat .omc/notepad.md",
-    "git -c core.fsmonitor=false status -sb",
+    "종료 코드가 0이어도",
+    "같은 파일",
+    "OMC 미설치",
+    "git -c core.fsmonitor=false status --short --branch --untracked-files=all",
     "git -c core.fsmonitor=false diff --stat HEAD",
-    "git -c core.fsmonitor=false ls-files --others --exclude-standard",
     "git -c core.fsmonitor=false log --oneline -5",
+    ".omc/notepad.md",
     "세션 불일치",
     "stale",
     "소스/스킬 변경",
@@ -285,3 +289,8 @@ def test_invalid_status_output_fixture_exposes_weak_status_report():
     assert {"session", "git", "classification", "warning", "next_action"}.issubset(
         set(failures)
     )
+
+
+def test_status_does_not_use_a_separate_untracked_listing():
+    for path in REQUIRED_STATUS_SKILL_PATHS:
+        assert "ls-files --others" not in _read(path)

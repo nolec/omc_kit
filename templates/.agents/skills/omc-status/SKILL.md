@@ -9,14 +9,10 @@ description: "현재 세션 상태·작업 컨텍스트 출력. 트리거: 지�
 
 ## Phase 0. 수집
 
-```bash
-python3 scripts/omc.py state status --target .
-cat .omc/notepad.md
-GIT_OPTIONAL_LOCKS=0 git -c core.fsmonitor=false status -sb
-GIT_OPTIONAL_LOCKS=0 git -c core.fsmonitor=false diff --stat HEAD
-GIT_OPTIONAL_LOCKS=0 git -c core.fsmonitor=false ls-files --others --exclude-standard
-GIT_OPTIONAL_LOCKS=0 git -c core.fsmonitor=false log --oneline -5
-```
+1. 같은 저장소에서 작업 트리와 세션 상태가 바뀌기 전에 얻은 `state status` 결과를 재사용합니다. 현재 결과가 없으면 OMC 설치본에서 `python3 scripts/omc.py state status --target .`를 실행합니다.
+2. 종료 코드가 0이어도 필요한 세션·Git 항목이 실제로 출력됐는지 확인합니다. staged와 unstaged 양쪽에 같은 파일이 있으면 두 범주에 모두 표시합니다.
+3. OMC 미설치·조회 실패·항목 누락 또는 브랜치·ahead/behind·전체 경로가 필요할 때만 기존 Git 결과를 재사용하거나 `GIT_OPTIONAL_LOCKS=0 git -c core.fsmonitor=false status --short --branch --untracked-files=all`로 빠진 Git 정보만 보완합니다. Git으로 확인한 결과와 확인 불가인 OMC 세션은 따로 표시합니다.
+4. 판단에 필요한 내용만 선택해 보완합니다. 변경량은 `GIT_OPTIONAL_LOCKS=0 git -c core.fsmonitor=false diff --stat HEAD`, 최근 커밋은 `GIT_OPTIONAL_LOCKS=0 git -c core.fsmonitor=false log --oneline -5`, 메모 본문은 `.omc/notepad.md`에서 확인합니다.
 
 ## Phase 1. 세션 판정
 

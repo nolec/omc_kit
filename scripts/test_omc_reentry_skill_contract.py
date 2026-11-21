@@ -25,9 +25,13 @@ REQUIRED_SEQUENCE = [
     "README",
     "ETHOS.md",
     "AGENTS.md",
-    "git status -sb",
-    "git log --oneline -5",
+    "같은 저장소",
+    "재사용",
     "python3 scripts/omc.py state status --target .",
+    "종료 코드가 0이어도",
+    "OMC 미설치",
+    "git -c core.fsmonitor=false status --short --branch --untracked-files=all",
+    "git -c core.fsmonitor=false log --oneline -5",
     "프로젝트 한 줄 요약",
     "핵심 구조",
     "실행/검증 진입점",
@@ -201,3 +205,8 @@ def test_invalid_reentry_output_fixture_exposes_weak_reentry_report():
     assert {"summary", "structure", "entry", "ssot", "recent", "reading_list", "next_skill"}.issubset(
         set(failures)
     )
+
+
+def test_reentry_does_not_require_a_second_git_status_summary():
+    for path in REQUIRED_REENTRY_SKILL_PATHS:
+        assert "git status -sb" not in _read(path)
