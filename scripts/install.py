@@ -459,9 +459,7 @@ def _prune_stale_managed_outputs(
     *,
     force: bool,
 ) -> int:
-    """Remove retired OMC-owned files only during an explicit force install."""
-    if not force:
-        return 0
+    """Forget missing retired paths and prune unchanged files on force installs."""
     removed = 0
     for rel, entry in list(manifest.items()):
         if (
@@ -473,32 +471,34 @@ def _prune_stale_managed_outputs(
         path = target / rel
         if any((target / parent).is_symlink() for parent in (Path(rel), *Path(rel).parents)):
             continue
-        if path.exists() and not path.is_file():
+        if not path.exists():
+            manifest.pop(rel)
             continue
-        if path.is_file():
-            ownership = classify_receipt_entry_ownership(
-                {"schema_version": entry.get("previous_receipt_schema_version")},
-                rel,
-                entry,
-            )
-            if ownership != "exclusive_managed":
-                continue
-            previous_hash = str(entry.get("previous_target_sha256", ""))
-            if not previous_hash or _sha256_file(path) != previous_hash:
-                if (
-                    rel == _RETIRED_HUB_RULE
-                    and len(previous_hash) == 64
-                    and all(char in "0123456789abcdef" for char in previous_hash)
-                    and path.is_file()
-                ):
-                    # Retired source, known prior ownership, changed regular file:
-                    # retain bytes without claiming source equality or ownership.
-                    entry["policy"] = "preserve"
-                    entry["ownership"] = "preserved"
-                    entry["source_sha256"] = ""
-                continue
-            path.unlink()
-            removed += 1
+        if not force or not path.is_file():
+            continue
+        ownership = classify_receipt_entry_ownership(
+            {"schema_version": entry.get("previous_receipt_schema_version")},
+            rel,
+            entry,
+        )
+        if ownership != "exclusive_managed":
+            continue
+        previous_hash = str(entry.get("previous_target_sha256", ""))
+        if not previous_hash or _sha256_file(path) != previous_hash:
+            if (
+                rel == _RETIRED_HUB_RULE
+                and len(previous_hash) == 64
+                and all(char in "0123456789abcdef" for char in previous_hash)
+                and path.is_file()
+            ):
+                # Retired source, known prior ownership, changed regular file:
+                # retain bytes without claiming source equality or ownership.
+                entry["policy"] = "preserve"
+                entry["ownership"] = "preserved"
+                entry["source_sha256"] = ""
+            continue
+        path.unlink()
+        removed += 1
         manifest.pop(rel, None)
     return removed
 
@@ -1092,10 +1092,25 @@ def _main() -> int:
     # 타겟에 파일이 이미 있으면 OMC 섹션만 추가, 없으면 전체 복사.
     # 마커가 있는 파일은 중복 추가 방지. 없는 파일은 전체 복사.
     _MERGE_MARKERS = {
-        "ETHOS.md":  "## Engineering Ethos",
         "CODEX.md":  "## OMC Overlay For Codex",
     }
-    _handled: set[str] = set()
+    _handled = {"ETHOS.md"}
+
+    ethos = tgt / "ETHOS.md"
+    ethos_template = templates / "ETHOS.md"
+    ethos_created = False
+    if ethos.is_symlink() or (ethos.exists() and not ethos.is_file()):
+        install_manifest.pop("ETHOS.md", None)
+    elif ethos.is_file():
+        previous = install_manifest.get("ETHOS.md", {})
+        previous_hash = previous.get("previous_target_sha256")
+        if previous_hash and previous_hash == previous.get("target_sha256"):
+            _register_generated_output(ethos, previous_target_sha256=previous_hash)
+        else:
+            _register_preserved_output(ethos)
+    elif ethos_template.is_file():
+        _copy(ethos_template, ethos, force=force)
+        ethos_created = True
 
     agents_tpl = templates / "AGENTS.md"
     if agents_tpl.exists():
@@ -1123,12 +1138,6 @@ def _main() -> int:
                 require_previously_managed=True,
             )
         else:
-            # ETHOS.md는 섹션 5에 실제 내용이 채워진 경우 --force여도 덮어쓰지 않는다.
-            if tgt_name == "ETHOS.md" and tgt_file.exists() and force:
-                cur = tgt_file.read_text(encoding="utf-8")
-                if "___" not in cur:
-                    print(f"[install] skipped {tgt_name} (섹션 5 이미 채워짐)")
-                    continue
             _copy(tpl_file, tgt_file, force=force)
 
     # templates/ 루트의 나머지 .md 파일 자동 복사 (수동 등록 불필요)
@@ -1207,7 +1216,8 @@ def _main() -> int:
 
     print(f"Installed OMC kit into: {tgt}")
 
-    _setup_ethos_section5(tgt)
+    if ethos_created:
+        _setup_ethos_section5(tgt)
     migrate_tasks = force and migrate_shared_tasks
     _install_shared_tasks(
         source_kit,
@@ -1416,6 +1426,7 @@ def _setup_ethos_section5(tgt: "Path") -> None:
         flags=_re.DOTALL,
     )
     ethos_path.write_text(new_content, encoding="utf-8")
+    _register_generated_output(ethos_path)
     print(f"[ETHOS] 섹션 5 저장 완료 → {ethos_path.relative_to(tgt)}")
 
 

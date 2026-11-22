@@ -76,6 +76,50 @@ def test_fresh_git_install_excludes_new_prompts_without_changing_user_rules(tmp_
     assert audit.returncode == 0, audit.stdout + audit.stderr
 
 
+@pytest.mark.parametrize('force', [False, True])
+def test_reinstall_preserves_existing_ethos_and_forgets_missing_retired_entries(tmp_path, force):
+    subprocess.run(['git', 'init', '-q', str(tmp_path)], check=True)
+    install(tmp_path)
+
+    ethos = tmp_path / 'ETHOS.md'
+    original = '# Project rules\r\n\r\n## 5. 이 프로젝트 맥락\r\n\r\n___\r\n'.encode()
+    ethos.write_bytes(original)
+    ethos.chmod(0o640)
+    prior_stat = ethos.stat()
+    receipt_file = tmp_path / '.omc/install-receipt.json'
+    receipt = json.loads(receipt_file.read_text())
+    retired = '.agents/skills/omc-brainstorm/SKILL.md'
+    retired_template = ROOT / 'templates' / retired
+    assert not retired_template.exists()
+    assert not (tmp_path / retired).exists()
+    receipt['entries'][retired] = {
+        'policy': 'managed_exact', 'ownership': 'exclusive_managed', 'status': 'updated',
+        'source_sha256': 'a' * 64, 'target_sha256': 'a' * 64,
+    }
+    receipt_file.write_text(json.dumps(receipt))
+
+    cli = tmp_path / 'scripts/omc.py'
+    cli.unlink()
+    result = subprocess.run(
+        [sys.executable, '-B', str(ROOT / 'scripts/install.py'), '--target', str(tmp_path)]
+        + (['--force'] if force else []),
+        cwd=ROOT, input='Y\n', capture_output=True, text=True,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert ethos.read_bytes() == original
+    assert ethos.stat().st_mode == prior_stat.st_mode
+    assert ethos.stat().st_mtime_ns == prior_stat.st_mtime_ns
+    receipt = json.loads(receipt_file.read_text())
+    assert receipt['entries']['ETHOS.md']['policy'] == 'preserve'
+    assert retired not in receipt['entries']
+    assert cli.read_bytes() == (ROOT / 'scripts/omc.py').read_bytes()
+    audit = subprocess.run(
+        [sys.executable, '-B', str(ROOT / 'scripts/omc_install_audit.py'), '--strict', str(tmp_path)],
+        cwd=ROOT, capture_output=True, text=True,
+    )
+    assert audit.returncode == 0, audit.stdout + audit.stderr
+
+
 PR_CREATE = Path('.agents/skills/pr-create')
 PR_CREATE_FILES = ('SKILL.md', 'agents/openai.yaml')
 

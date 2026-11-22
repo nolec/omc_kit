@@ -596,6 +596,17 @@ class TestInstallManifest(unittest.TestCase):
             self.assertNotIn(".cursor/rules/omc-retired.mdc", manifest)
             self.assertIn("scripts/project.py", manifest)
 
+    def test_non_force_drops_missing_stale_entry_without_counting_file_removal(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp)
+            rel = "docs/omc_retired.md"
+            manifest = {rel: {"previously_managed": True, "registered_current_install": False}}
+
+            removed = _install._prune_stale_managed_outputs(target, manifest, force=False)
+
+            self.assertEqual(removed, 0)
+            self.assertNotIn(rel, manifest)
+
     def test_non_force_keeps_stale_managed_output_for_audit(self):
         with tempfile.TemporaryDirectory() as tmp:
             target = Path(tmp) / "target"
