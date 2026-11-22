@@ -120,6 +120,33 @@ def test_reinstall_preserves_existing_ethos_and_forgets_missing_retired_entries(
     assert audit.returncode == 0, audit.stdout + audit.stderr
 
 
+@pytest.mark.parametrize('flags', [(), ('--force',)])
+def test_reinstall_preserves_agents_and_existing_git_excludes(tmp_path, flags):
+    subprocess.run(['git', 'init', '-q', str(tmp_path)], check=True)
+    install(tmp_path)
+    agents = tmp_path / 'AGENTS.md'
+    gitignore = tmp_path / '.gitignore'
+    exclude = tmp_path / '.git/info/exclude'
+    agents.write_bytes(b'# Project-only rules\r\nNo implicit workflows.\r\n')
+    gitignore.write_bytes(b'# Team rules\r\n/local-cache/\r\n')
+    exclude.write_bytes(exclude.read_bytes().replace(
+        b'# OMC-KIT:END', b'/local-only.txt\n# OMC-KIT:END',
+    ).replace(b'\n', b'\r\n'))
+    paths = (agents, gitignore, exclude)
+    before = [(path.read_bytes(), path.stat().st_mtime_ns) for path in paths]
+
+    _install_seeds(tmp_path, *flags)
+
+    assert [(path.read_bytes(), path.stat().st_mtime_ns) for path in paths] == before
+    receipt = json.loads((tmp_path / '.omc/install-receipt.json').read_text())
+    assert receipt['entries']['AGENTS.md']['policy'] == 'preserve'
+    audit = subprocess.run(
+        [sys.executable, '-B', str(ROOT / 'scripts/omc_install_audit.py'), '--strict', str(tmp_path)],
+        cwd=ROOT, capture_output=True, text=True,
+    )
+    assert audit.returncode == 0, audit.stdout + audit.stderr
+
+
 PR_CREATE = Path('.agents/skills/pr-create')
 PR_CREATE_FILES = ('SKILL.md', 'agents/openai.yaml')
 

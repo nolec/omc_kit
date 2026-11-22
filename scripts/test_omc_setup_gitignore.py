@@ -93,6 +93,45 @@ def test_update_managed_gitignore_is_exclusive_only_and_idempotent(
     assert gitignore.read_text(encoding="utf-8") == ".venv/\n"
 
 
+@pytest.mark.parametrize("has_managed_block", [False, True])
+def test_reinstall_only_adds_missing_git_rules(tmp_path: Path, has_managed_block: bool) -> None:
+    assert _git(tmp_path, "init").returncode == 0
+    gitignore = tmp_path / ".gitignore"
+    shared = b"/covered.md\r\n!/keep-visible.md\r\n"
+    gitignore.write_bytes(shared)
+    exclude = _git_exclude_path(tmp_path)
+    local = b"# local rule\r\n/local-note\r\n"
+    before = local
+    if has_managed_block:
+        before += b"# OMC-KIT:BEGIN\r\n/retired-rule\r\n# OMC-KIT:END\r\n"
+    exclude.write_bytes(before)
+    receipt = {
+        "schema_version": 3,
+        "entries": {
+            name: {"policy": "managed_exact", "ownership": "exclusive_managed"}
+            for name in ("covered.md", "new-managed.md", "keep-visible.md")
+        },
+    }
+
+    update_managed_gitignore(tmp_path, receipt, preserve_existing=True)
+
+    assert gitignore.read_bytes() == shared
+    after = exclude.read_bytes()
+    assert after.startswith(local)
+    if has_managed_block:
+        assert b"/retired-rule\r\n" in after
+        assert after.count(b"# OMC-KIT:BEGIN") == 1
+    assert b"/covered.md" not in after
+    assert b"/keep-visible.md" not in after
+    assert b"/new-managed.md\r\n" in after
+    assert _git(tmp_path, "check-ignore", "new-managed.md").returncode == 0
+    assert _git(tmp_path, "check-ignore", "keep-visible.md").returncode == 1
+    timestamp = exclude.stat().st_mtime_ns
+    update_managed_gitignore(tmp_path, receipt, preserve_existing=True)
+    assert exclude.read_bytes() == after
+    assert exclude.stat().st_mtime_ns == timestamp
+
+
 def test_update_managed_gitignore_hides_only_setup_created_merged_hosts(
     tmp_path: Path,
 ) -> None:

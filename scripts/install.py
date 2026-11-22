@@ -297,7 +297,8 @@ def _write_install_receipt(
     now = datetime.now(timezone.utc).isoformat()
     installed_at = now
     path = target / INSTALL_RECEIPT
-    if path.is_file():
+    reinstall = path.is_file()
+    if reinstall:
         try:
             previous = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
@@ -317,7 +318,9 @@ def _write_install_receipt(
         "updated_at": now,
         "entries": entries,
     }
-    update_managed_gitignore(target, receipt, sync_migration_receipt=True)
+    update_managed_gitignore(
+        target, receipt, sync_migration_receipt=True, preserve_existing=reinstall,
+    )
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(receipt, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     return receipt
@@ -547,6 +550,18 @@ def _register_preserved_output(path: Path) -> None:
         "previous_target_sha256": digest,
         "registered_current_install": True,
     }
+
+
+def _retain_existing_host_output(path: Path, manifest: dict[str, dict[str, str]]) -> None:
+    if path.is_symlink() or not path.is_file():
+        manifest.pop(path.name, None)
+        return
+    previous = manifest.get(path.name, {})
+    previous_hash = previous.get("previous_target_sha256")
+    if previous_hash and previous_hash == previous.get("target_sha256"):
+        _register_generated_output(path, previous_target_sha256=previous_hash)
+    else:
+        _register_preserved_output(path)
 
 
 def _reset_install_policy_context() -> None:
@@ -1099,15 +1114,8 @@ def _main() -> int:
     ethos = tgt / "ETHOS.md"
     ethos_template = templates / "ETHOS.md"
     ethos_created = False
-    if ethos.is_symlink() or (ethos.exists() and not ethos.is_file()):
-        install_manifest.pop("ETHOS.md", None)
-    elif ethos.is_file():
-        previous = install_manifest.get("ETHOS.md", {})
-        previous_hash = previous.get("previous_target_sha256")
-        if previous_hash and previous_hash == previous.get("target_sha256"):
-            _register_generated_output(ethos, previous_target_sha256=previous_hash)
-        else:
-            _register_preserved_output(ethos)
+    if ethos.exists() or ethos.is_symlink():
+        _retain_existing_host_output(ethos, install_manifest)
     elif ethos_template.is_file():
         _copy(ethos_template, ethos, force=force)
         ethos_created = True
@@ -1116,8 +1124,11 @@ def _main() -> int:
     if agents_tpl.exists():
         _handled.add("AGENTS.md")
         agents_dst = tgt / "AGENTS.md"
-        agents_block = _extract_agents_omc_block(agents_tpl.read_text(encoding="utf-8"))
-        _merge_agents_template(agents_dst, agents_block)
+        if (tgt / INSTALL_RECEIPT).is_file() and (agents_dst.exists() or agents_dst.is_symlink()):
+            _retain_existing_host_output(agents_dst, install_manifest)
+        else:
+            agents_block = _extract_agents_omc_block(agents_tpl.read_text(encoding="utf-8"))
+            _merge_agents_template(agents_dst, agents_block)
 
     # 마커 기반 병합 대상 (기존 파일에 섹션 추가)
     for tgt_name, marker in _MERGE_MARKERS.items():
