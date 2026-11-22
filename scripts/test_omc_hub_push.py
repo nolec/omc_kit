@@ -168,22 +168,26 @@ def test_new_install_and_strict_audit(tmp_path):
     assert result.returncode == 0, result.stdout + result.stderr
     assert not (tmp_path / '.cursor/rules/omc-hub-sync.mdc').exists()
     assert not (tmp_path / '.agent-hooks/omc-hub-push.sh').exists()
-    expected = {p.name for p in (ROOT / 'templates/.agent-hooks').glob('*.sh')} - {'omc-hub-push.sh'}
+    assert not (tmp_path / '.agent-hooks/omc-before-agent.sh').exists()
+    expected = {p.name for p in (ROOT / 'templates/.agent-hooks').glob('*.sh')} - {
+        'omc-hub-push.sh', 'omc-before-agent.sh',
+    }
     assert {p.name for p in (tmp_path / '.agent-hooks').glob('*.sh')} == expected
     result = subprocess.run([sys.executable, str(ROOT / 'scripts/omc_install_audit.py'), str(tmp_path), '--strict'], cwd=ROOT, text=True, capture_output=True)
     assert result.returncode == 0, result.stdout + result.stderr
 
 
+@pytest.mark.parametrize('name', ['omc-hub-push.sh', 'omc-before-agent.sh'])
 @pytest.mark.parametrize('force', [False, True])
 @pytest.mark.parametrize('modified', [False, True])
-def test_reinstall_preserves_previous_hub_shell_file(tmp_path, force, modified):
+def test_reinstall_preserves_previous_legacy_hook(tmp_path, name, force, modified):
     import hashlib
     import json
 
     command = [sys.executable, '-B', str(ROOT / 'scripts/install.py'), '--target', str(tmp_path)]
     initial = subprocess.run(command, cwd=ROOT, text=True, capture_output=True)
     assert initial.returncode == 0, initial.stdout + initial.stderr
-    relative = '.agent-hooks/omc-hub-push.sh'
+    relative = f'.agent-hooks/{name}'
     original = (ROOT / 'templates' / relative).read_bytes()
     content = original + b'\n# local change\n' if modified else original
     hook = tmp_path / relative
@@ -206,7 +210,8 @@ def test_reinstall_preserves_previous_hub_shell_file(tmp_path, force, modified):
     receipt = json.loads(receipt_path.read_text())
     assert receipt['entries'][relative]['target_sha256'] == hashlib.sha256(content).hexdigest()
     if modified:
-        assert 'preserved non-stub' in reinstall.stdout
+        if name == 'omc-hub-push.sh':
+            assert 'preserved non-stub' in reinstall.stdout
         assert receipt['entries'][relative]['policy'] == 'preserve'
 
 
