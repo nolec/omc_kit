@@ -169,15 +169,16 @@ def test_new_install_and_strict_audit(tmp_path):
     assert not (tmp_path / '.cursor/rules/omc-hub-sync.mdc').exists()
     assert not (tmp_path / '.agent-hooks/omc-hub-push.sh').exists()
     assert not (tmp_path / '.agent-hooks/omc-before-agent.sh').exists()
+    assert not (tmp_path / '.agent-hooks/omc-post-file-check.sh').exists()
     expected = {p.name for p in (ROOT / 'templates/.agent-hooks').glob('*.sh')} - {
-        'omc-hub-push.sh', 'omc-before-agent.sh',
+        'omc-hub-push.sh', 'omc-before-agent.sh', 'omc-post-file-check.sh',
     }
     assert {p.name for p in (tmp_path / '.agent-hooks').glob('*.sh')} == expected
     result = subprocess.run([sys.executable, str(ROOT / 'scripts/omc_install_audit.py'), str(tmp_path), '--strict'], cwd=ROOT, text=True, capture_output=True)
     assert result.returncode == 0, result.stdout + result.stderr
 
 
-@pytest.mark.parametrize('name', ['omc-hub-push.sh', 'omc-before-agent.sh'])
+@pytest.mark.parametrize('name', ['omc-hub-push.sh', 'omc-before-agent.sh', 'omc-post-file-check.sh'])
 @pytest.mark.parametrize('force', [False, True])
 @pytest.mark.parametrize('modified', [False, True])
 def test_reinstall_preserves_previous_legacy_hook(tmp_path, name, force, modified):

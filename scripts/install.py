@@ -40,6 +40,7 @@ _RETIRED_HUB_HOOK = ".agent-hooks/omc-hub-push.sh"
 _SOURCE_ONLY_AGENT_HOOKS = {
     _RETIRED_HUB_HOOK,
     ".agent-hooks/omc-before-agent.sh",
+    ".agent-hooks/omc-post-file-check.sh",
 }
 AGENTS_OMC_END = "<!-- OMC:END -->"
 AGENTS_OMC_VERSION = "<!-- OMC:AGENTS:V1 -->"
