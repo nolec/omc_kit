@@ -113,7 +113,9 @@ python omc_kit/scripts/safe_trash.py <path1> <path2> ...
    --work-class document_only --for task`로 실제 세션을 시작합니다.
    `directive` 단독 역할에는 work_class를 지정할 수 없습니다. 작업 중 코드를 추가/변경하면 문서 작업을 계속하지 않습니다.
 5. 선택 문서만 검증하고 정확한 경로로 스테이징합니다. 범위 밖 파일이 스테이징돼 있으면 커밋하지 않습니다.
-   Git diff, 설치된 커밋 훅의 확인, 커밋 후 변경 경로와 `completion.json`의 document_only 결속을 확인합니다.
+   커밋 전에 Git diff를 확인합니다. 신규 설치는 Git 커밋 훅을 추가하지 않으므로 커밋 후
+   격리 clone에서 `python3 scripts/omc.py state complete --target .`를 직접 실행합니다.
+   커밋에 포함된 경로와 `completion.json`의 `work_class: document_only`, `changed_paths`를 확인합니다.
    원본의 HEAD·인덱스·코드·기존 문서·receipt가 시작 때와 같은지도 확인합니다.
 6. 결과는 격리 clone의 커밋과 문서 diff로 제시합니다. 원본 반영은 별도 승인 후 수행하며
    원본 문서가 시작 때와 달라졌거나 충돌이 있으면 반영하지 않습니다. 자동 cherry-pick·덮어쓰기·정리는 하지 않습니다.
@@ -189,7 +191,8 @@ except (OSError, ValueError, subprocess.CalledProcessError, IndexError) as exc:
 
 회귀 검증: `python3 -m pytest scripts/test_omc_guard.py -q -k document_isolation`.
 이 시험은 임시 저장소에서 기존 코드 스테이징·문서 미커밋 변경·receipt 보존과
-실제 setup→세션 저장→커밋 훅→완료 기록을 검증합니다. 실제 OKX 문서 이동·반영 및 재설치는 수행하지 않습니다.
+setup과 세션 저장, 문서만 포함한 커밋, `state complete`로 생성한 완료 기록을 검증합니다.
+실제 OKX 문서 이동·반영 및 재설치는 수행하지 않습니다.
 
 <!-- OMC:DOCUMENT-ISOLATION:END -->
 

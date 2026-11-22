@@ -104,8 +104,11 @@ def test_document_isolation_real_cli_preserves_original(tmp_path, monkeypatch):
     installed = subprocess.run([sys.executable, str(OMC), 'setup', '--target', str(isolated), '--force', '--skip-session-start'], capture_output=True, text=True)
     assert installed.returncode == 0, installed.stdout + installed.stderr
     deployed = (isolated / 'docs/omc_workflow.md').read_text()
-    original_guide = (ROOT / 'docs/orchestration_usage.md').read_text().split('## 기존 코드 변경이 있는 문서 작업: 독립 clone V0', 1)[1].split('## 중단된 workflow-v2의 복구 판단', 1)[0]
-    assert '## 기존 코드 변경이 있는 문서 작업: 독립 clone V0' + original_guide in deployed
+    assert deployed == (ROOT / 'docs/omc_workflow.md').read_text()
+    document_workflow = deployed.split('<!-- OMC:DOCUMENT-ISOLATION:BEGIN -->', 1)[1].split(
+        '<!-- OMC:DOCUMENT-ISOLATION:END -->', 1,
+    )[0]
+    assert '`python3 scripts/omc.py state complete --target .`' in document_workflow
     (isolated / 'docs/plan.md').write_bytes(before_doc)
     started = subprocess.run(args + ['--target', str(isolated)], capture_output=True, text=True)
     assert started.returncode == 0, started.stdout + started.stderr

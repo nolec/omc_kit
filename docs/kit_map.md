@@ -23,7 +23,7 @@ OMC 원본 체크아웃/
     CODEX.md             AGENTS.md를 가리키는 안내
     .agents/skills/      Codex에서 $스킬명으로 호출하는 Agent Skills
     .codex/commands/     Quickstart와 상세 운영 문서 링크
-    .agent-hooks/        수동 라이프사이클용 스크립트
+    .agent-hooks/        신규 기본 설치에서 제외되는 레거시 셸 훅 원본
   docs/                  사용 및 운영 문서
   prompts/               공통 역할·모드 프롬프트
 
@@ -32,6 +32,9 @@ OMC 원본 체크아웃/
   project_prompts/       프로젝트별 역할·프로필 (선택)
   .omc/                  설치 출처, 교훈, 세션·작업 기록
 ```
+
+레거시 셸 훅 7개는 원본 킷에 남아 있으며, 기존 설치 사본은 일반 재설치와 `--force`에서 보존됩니다.
+라이프사이클 작업은 `python3 scripts/omc.py hook <이벤트>`로 명시적으로 실행합니다.
 
 ## 핵심 스크립트 목록 (SSOT)
 
