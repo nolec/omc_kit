@@ -169,6 +169,7 @@ SOURCE_ONLY_HOOK_NAMES = (
     'omc-post-file-check.sh',
     'omc-session-end.sh',
     'omc-prompt-inject.sh',
+    'omc-session-start.sh',
 )
 
 
@@ -178,6 +179,18 @@ def test_new_install_and_strict_audit(tmp_path):
     assert not (tmp_path / '.cursor/rules/omc-hub-sync.mdc').exists()
     expected = {p.name for p in (ROOT / 'templates/.agent-hooks').glob('*.sh')} - set(SOURCE_ONLY_HOOK_NAMES)
     assert {p.name for p in (tmp_path / '.agent-hooks').glob('*.sh')} == expected
+    doctor = subprocess.run(
+        [sys.executable, str(tmp_path / 'scripts/omc_doctor.py'), '--target', str(tmp_path)],
+        cwd=tmp_path, text=True, capture_output=True,
+    )
+    assert doctor.returncode == 0, doctor.stdout + doctor.stderr
+    assert 'omc-session-start.sh' not in doctor.stdout
+    for label in (
+        '.agent-hooks/omc-pipeline-check.sh (hook_block 차단코드)',
+        '훅 파일 실행권한 (chmod +x)',
+        'Codex automatic hooks disabled',
+    ):
+        assert any('[OK]' in line and label in line for line in doctor.stdout.splitlines()), doctor.stdout
     result = subprocess.run([sys.executable, str(ROOT / 'scripts/omc_install_audit.py'), str(tmp_path), '--strict'], cwd=ROOT, text=True, capture_output=True)
     assert result.returncode == 0, result.stdout + result.stderr
 

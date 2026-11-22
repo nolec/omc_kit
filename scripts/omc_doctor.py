@@ -214,11 +214,6 @@ def _build_checks(root: Path) -> list[Check]:
 
     # ── agent-hooks ──────────────────────────────────────────────────────────
     hooks_dir = root / ".agent-hooks"
-    hooks_ok = (hooks_dir / "omc-session-start.sh").exists()
-    checks.append(Check(
-        ".agent-hooks/omc-session-start.sh", hooks_ok,
-        fix_cmd="python3 scripts/install.py --target . --force",
-    ))
 
     # ── .agent-hooks/omc-pipeline-check.sh 존재 + exit 2 차단 코드 ─────────
     agent_pipeline_check = hooks_dir / "omc-pipeline-check.sh"

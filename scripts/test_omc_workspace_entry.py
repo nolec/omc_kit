@@ -185,12 +185,26 @@ def installed(tmp_path_factory):
     return target
 
 
-def test_installed_hook_cli_and_skill_surface_use_new_entry(tmp_path, installed):
+def test_installed_lifecycle_cli_and_skill_surface_use_new_entry(tmp_path, installed):
     source = repo(tmp_path/'source'); parent = tmp_path/'spaces'
-    # Installed executable/hook, independent source; no template-only success.
-    hook = installed/'.agent-hooks/omc-session-start.sh'
-    result = subprocess.run(['bash', str(hook), 'codex'], cwd=source, input='{}', capture_output=True, text=True)
-    assert result.returncode == 0 and not (source/'.omc').exists()
+    assert not (installed / '.agent-hooks/omc-session-start.sh').exists()
+
+    pipeline_state = installed / '.omc/pipeline_session.json'
+    pipeline_state.write_text(json.dumps({'contract_confirmed': True}))
+    env = dict(os.environ, OMC_AUTO_UPDATE='0')
+    env.pop('OMC_SESSION_START_HANDOFF', None)
+    result = subprocess.run(
+        [sys.executable, '-B', str(installed / 'scripts/omc.py'),
+         'hook', 'session_start', '--target', str(installed)],
+        cwd=installed, env=env, capture_output=True, text=True,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "[PIPELINE]" in result.stdout
+    state = json.loads(pipeline_state.read_text())
+    assert state['contract_confirmed'] is False
+    assert state['contract_reset_reason'] == 'session_start'
+    assert not (source / '.omc').exists()
+
     value = data(run_entry(source, parent, '--intent', 'start', '--request', '새 작업', script=installed/'scripts/omc.py'))
     assert value['preparation_status'] == 'WORKSPACE_READY'
     task = (installed/'.agents/skills/omc-task/SKILL.md').read_text()
