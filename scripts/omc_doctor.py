@@ -18,6 +18,7 @@ from pathlib import Path
 
 import omc_install_audit
 from omc_hook_contract import codex_hooks_disabled
+from omc_setup_gitignore import git_deleted_host_docs
 
 
 AGENTS_OMC_BEGIN = "<!-- OMC:BEGIN -->"
@@ -265,11 +266,17 @@ def _build_checks(root: Path) -> list[Check]:
     ))
 
     # ── AGENTS.md OMC 안내 블록 ─────────────────────────────────────────────
+    try:
+        deleted_docs = git_deleted_host_docs(root)
+    except (OSError, ValueError):
+        deleted_docs = set()
+    deleted_detail = "Git 삭제 상태입니다. 일반 재설치에서 삭제 상태를 보존합니다."
     agents = root / "AGENTS.md"
     agents_exists = agents.exists()
     agents_text = agents.read_text(encoding="utf-8") if agents_exists else ""
     agents_ok = all(marker in agents_text for marker in (AGENTS_OMC_BEGIN, AGENTS_OMC_END, AGENTS_OMC_VERSION))
-    detail = ""
+    agents_deleted = "AGENTS.md" in deleted_docs
+    detail = deleted_detail if agents_deleted else ""
     if agents_exists and not agents_ok:
         detail = (
             "재설치 시 기존 AGENTS.md를 보존합니다. OMC 안내가 필요할 때만 "
@@ -279,8 +286,8 @@ def _build_checks(root: Path) -> list[Check]:
         "AGENTS.md (최신 OMC 블록 포함)",
         agents_ok,
         detail=detail,
-        fix_cmd="" if agents_exists else "python3 scripts/install.py --target .",
-        optional=agents_exists,
+        fix_cmd="" if agents_exists or agents_deleted else "python3 scripts/install.py --target .",
+        optional=agents_exists or agents_deleted,
     ))
 
     # ── 잔존 구버전 참조 체크 ───────────────────────────────────────────────
@@ -332,10 +339,13 @@ def _build_checks(root: Path) -> list[Check]:
     # ── 필수 문서 존재 ────────────────────────────────────────────────────────
     for doc in ["ETHOS.md", "CODEX.md", "CONVENTIONS.md"]:
         p = root / doc
+        deleted = doc in deleted_docs
         checks.append(Check(
             f"{doc} 존재",
             p.exists(),
-            fix_cmd=f"python3 scripts/install.py --target . --force  # {doc} 재배포",
+            detail=deleted_detail if deleted else "",
+            fix_cmd="" if deleted else f"python3 scripts/install.py --target . --force  # {doc} 재배포",
+            optional=deleted,
         ))
 
     # ── ETHOS.md 섹션 5 플레이스홀더 여부 ────────────────────────────────────

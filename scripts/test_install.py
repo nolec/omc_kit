@@ -1340,6 +1340,44 @@ class TestDoctorAgentsBlock(unittest.TestCase):
             self.assertFalse(check.optional)
             self.assertEqual(check.fix_cmd, "python3 scripts/install.py --target .")
 
+    def test_git_deleted_host_docs_are_optional(self):
+        for staged in (False, True):
+            with self.subTest(staged=staged), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                names = ("AGENTS.md", "CODEX.md")
+
+                def git(*args):
+                    return subprocess.check_output(["git", "--no-optional-locks", *args], cwd=root)
+
+                git("init", "-q")
+                for name in names:
+                    (root / name).write_text("# Project rules\n", encoding="utf-8")
+                git("add", "--", *names)
+                git("-c", "user.name=OMC Test", "-c", "user.email=omc@example.com",
+                    "-c", "core.hooksPath=/dev/null", "commit", "-qm", "Track project rules")
+                for name in names:
+                    (root / name).unlink()
+                if staged:
+                    git("add", "-u", "--", *names)
+                status = git("status", "--porcelain=v1", "-z", "--", *names)
+
+                checks = {c.label.split()[0]: c for c in _doctor._build_checks(root)}
+                for name in names:
+                    self.assertTrue(checks[name].optional)
+                    self.assertFalse(checks[name].ok)
+                    self.assertEqual(checks[name].fix_cmd, "")
+                    self.assertIn("Git 삭제", checks[name].detail)
+                    self.assertFalse((root / name).exists())
+                self.assertEqual(git("status", "--porcelain=v1", "-z", "--", *names), status)
+
+    def test_doctor_warns_when_codex_file_is_missing_without_git_deletion(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            check = next(c for c in _doctor._build_checks(Path(tmp)) if c.label == "CODEX.md 존재")
+
+            self.assertFalse(check.ok)
+            self.assertFalse(check.optional)
+            self.assertIn("scripts/install.py", check.fix_cmd)
+
     def test_doctor_requires_latest_agents_block_not_just_markers(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

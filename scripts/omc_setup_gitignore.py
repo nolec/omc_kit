@@ -262,6 +262,27 @@ def _is_git_repository(target: Path) -> bool:
     return result.returncode == 0 and result.stdout.strip() == "true"
 
 
+def git_deleted_host_docs(target: Path) -> set[str]:
+    missing = [
+        name for name in ("AGENTS.md", "CODEX.md")
+        if not (target / name).exists() and not (target / name).is_symlink()
+    ]
+    if not missing or not _is_git_repository(target):
+        return set()
+    result = subprocess.run(
+        ["git", "--no-optional-locks", "-c", "core.fsmonitor=false", "status", "--porcelain=v1",
+         "-z", "--no-renames", "--untracked-files=no", "--", *missing],
+        cwd=target, capture_output=True, check=False,
+    )
+    if result.returncode != 0:
+        raise ValueError("Unable to check Git deletion status for AGENTS.md and CODEX.md")
+    candidates = {name.encode(): name for name in missing}
+    return {
+        candidates[entry[3:]] for entry in result.stdout.split(b"\0")
+        if b"D" in entry[:2] and entry[3:] in candidates
+    }
+
+
 def _compact_ignore_rules(paths: list[str]) -> list[str]:
     remaining = set(paths)
     patterns: list[str] = []
