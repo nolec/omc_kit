@@ -5,6 +5,7 @@ import argparse
 import hashlib
 import json
 import stat
+import subprocess
 import sys
 import time
 from collections import Counter
@@ -27,6 +28,7 @@ from omc_source_hash import (
 )
 from omc_setup_gitignore import (
     MigrationStateError,
+    _is_git_repository,
     add_receipt_ownership,
     classify_receipt_entry_ownership,
     update_managed_gitignore,
@@ -145,6 +147,27 @@ def _install_summary(
         "managed_entry_count": len(entries),
         "change_counts": dict(sorted(change_counts.items())),
         "stage_timings_ms": dict(stage_timings_ms),
+    }
+
+
+def _git_deleted_host_docs(target: Path) -> set[str]:
+    missing = [
+        name for name in ("AGENTS.md", "CODEX.md")
+        if not (target / name).exists() and not (target / name).is_symlink()
+    ]
+    if not missing or not _is_git_repository(target):
+        return set()
+    result = subprocess.run(
+        ["git", "--no-optional-locks", "-c", "core.fsmonitor=false", "status", "--porcelain=v1",
+         "-z", "--no-renames", "--untracked-files=no", "--", *missing],
+        cwd=target, capture_output=True, check=False,
+    )
+    if result.returncode != 0:
+        raise ValueError("Unable to check Git deletion status for AGENTS.md and CODEX.md")
+    candidates = {name.encode(): name for name in missing}
+    return {
+        candidates[entry[3:]] for entry in result.stdout.split(b"\0")
+        if b"D" in entry[:2] and entry[3:] in candidates
     }
 
 
@@ -1058,6 +1081,8 @@ def _main() -> int:
             return _auto_update_exit_code(str(update["status"]))
         force = True
     validate_active_migration(tgt)
+    reinstall = (tgt / INSTALL_RECEIPT).is_file()
+    deleted_host_docs = _git_deleted_host_docs(tgt) if reinstall and not force else set()
     templates = _templates_root(source_kit)
     global _INSTALL_POLICY_ROOT, _INSTALL_POLICY_MANIFEST
     manifest_started = time.perf_counter()
@@ -1109,7 +1134,7 @@ def _main() -> int:
     _MERGE_MARKERS = {
         "CODEX.md":  "## OMC Overlay For Codex",
     }
-    _handled = {"ETHOS.md"}
+    _handled = {"ETHOS.md", *deleted_host_docs}
 
     ethos = tgt / "ETHOS.md"
     ethos_template = templates / "ETHOS.md"
@@ -1121,10 +1146,10 @@ def _main() -> int:
         ethos_created = True
 
     agents_tpl = templates / "AGENTS.md"
-    if agents_tpl.exists():
+    if agents_tpl.exists() and "AGENTS.md" not in deleted_host_docs:
         _handled.add("AGENTS.md")
         agents_dst = tgt / "AGENTS.md"
-        if (tgt / INSTALL_RECEIPT).is_file() and (agents_dst.exists() or agents_dst.is_symlink()):
+        if reinstall and (agents_dst.exists() or agents_dst.is_symlink()):
             _retain_existing_host_output(agents_dst, install_manifest)
         else:
             agents_block = _extract_agents_omc_block(agents_tpl.read_text(encoding="utf-8"))
@@ -1134,7 +1159,7 @@ def _main() -> int:
     for tgt_name, marker in _MERGE_MARKERS.items():
         tgt_file = tgt / tgt_name
         tpl_file = templates / tgt_name
-        if not tpl_file.exists():
+        if tgt_name in deleted_host_docs or not tpl_file.exists():
             continue
         _handled.add(tgt_name)
         if tgt_file.exists() and not force:

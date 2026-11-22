@@ -163,6 +163,41 @@ def test_reinstall_preserves_agents_and_existing_git_excludes(tmp_path, flags):
     assert audit.returncode == 0, audit.stdout + audit.stderr
 
 
+@pytest.mark.parametrize('staged', [False, True])
+def test_reinstall_preserves_git_deleted_host_docs(tmp_path, staged):
+    def git(*args):
+        return subprocess.check_output(
+            ['git', '--no-optional-locks', *args], cwd=tmp_path,
+        )
+
+    git('init', '-q')
+    install(tmp_path)
+    names = ('AGENTS.md', 'CODEX.md')
+    git('add', '-f', '--', *names)
+    git('-c', 'user.name=OMC Test', '-c', 'user.email=omc@example.com',
+        '-c', 'core.hooksPath=/dev/null', 'commit', '-qm', 'Track project rules')
+    for name in names:
+        (tmp_path / name).unlink()
+    if staged:
+        git('add', '-u', '--', *names)
+    status = git('status', '--porcelain=v1', '-z', '--', *names)
+    assert b'D' in status
+    index_before = (tmp_path / '.git/index').read_bytes()
+
+    install(tmp_path)
+
+    assert all(not (tmp_path / name).exists() for name in names)
+    assert git('status', '--porcelain=v1', '-z', '--', *names) == status
+    assert (tmp_path / '.git/index').read_bytes() == index_before
+    receipt = json.loads((tmp_path / '.omc/install-receipt.json').read_text())
+    assert all(name not in receipt['entries'] for name in names)
+    result = subprocess.run(
+        [sys.executable, '-B', str(ROOT / 'scripts/omc_install_audit.py'), '--strict', str(tmp_path)],
+        cwd=ROOT, capture_output=True, text=True,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
 PR_CREATE = Path('.agents/skills/pr-create')
 PR_CREATE_FILES = ('SKILL.md', 'agents/openai.yaml')
 
