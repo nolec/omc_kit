@@ -1314,6 +1314,30 @@ class TestAgentsMerge(unittest.TestCase):
 
 
 class TestDoctorAgentsBlock(unittest.TestCase):
+    def test_doctor_guides_manual_agents_block_for_existing_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            agents = root / "AGENTS.md"
+            original = b"# Project rules\r\n"
+            agents.write_bytes(original)
+
+            check = next(c for c in _doctor._build_checks(root) if c.label.startswith("AGENTS.md "))
+
+            self.assertFalse(check.ok)
+            self.assertEqual(check.fix_cmd, "")
+            self.assertIsNone(check.fix_fn)
+            self.assertIn("필요할 때만", check.detail)
+            self.assertIn("직접 추가", check.detail)
+            self.assertEqual(agents.read_bytes(), original)
+
+    def test_doctor_suggests_install_for_missing_agents_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            check = next(c for c in _doctor._build_checks(root) if c.label.startswith("AGENTS.md "))
+
+            self.assertFalse(check.ok)
+            self.assertEqual(check.fix_cmd, "python3 scripts/install.py --target .")
+
     def test_doctor_requires_latest_agents_block_not_just_markers(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

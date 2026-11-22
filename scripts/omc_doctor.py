@@ -255,24 +255,23 @@ def _build_checks(root: Path) -> list[Check]:
         fix_cmd="python3 scripts/install.py --target . --force",
     ))
 
-    # ── Shared + personal overlays ───────────────────────────────────────────
-    for rel_path, marker, label in [
-        ("AGENTS.md", AGENTS_OMC_BEGIN, "AGENTS.md (최신 OMC 블록 포함)"),
-    ]:
-        p = root / rel_path
-        if p.exists():
-            text = p.read_text(encoding="utf-8")
-            has_marker = marker in text
-            if rel_path == "AGENTS.md":
-                has_marker = has_marker and AGENTS_OMC_END in text and AGENTS_OMC_VERSION in text
-        else:
-            has_marker = False
-        checks.append(Check(
-            label,
-            has_marker,
-            fix_cmd=f"python3 scripts/install.py --target . --force",
-        ))
-
+    # ── AGENTS.md OMC 안내 블록 ─────────────────────────────────────────────
+    agents = root / "AGENTS.md"
+    agents_exists = agents.exists()
+    agents_text = agents.read_text(encoding="utf-8") if agents_exists else ""
+    agents_ok = all(marker in agents_text for marker in (AGENTS_OMC_BEGIN, AGENTS_OMC_END, AGENTS_OMC_VERSION))
+    detail = ""
+    if agents_exists and not agents_ok:
+        detail = (
+            "재설치 시 기존 AGENTS.md를 보존합니다. OMC 안내가 필요할 때만 "
+            "프로젝트 지침을 유지하면서 원본 킷의 templates/AGENTS.md에서 OMC 블록을 직접 추가하거나 갱신하세요."
+        )
+    checks.append(Check(
+        "AGENTS.md (최신 OMC 블록 포함)",
+        agents_ok,
+        detail=detail,
+        fix_cmd="" if agents_exists else "python3 scripts/install.py --target .",
+    ))
 
     # ── 잔존 구버전 참조 체크 ───────────────────────────────────────────────
     # 이름 변경 후 스크립트/문서에 구버전 문자열이 남아 있는지 검사
