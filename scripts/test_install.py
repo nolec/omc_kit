@@ -1324,6 +1324,7 @@ class TestDoctorAgentsBlock(unittest.TestCase):
             check = next(c for c in _doctor._build_checks(root) if c.label.startswith("AGENTS.md "))
 
             self.assertFalse(check.ok)
+            self.assertTrue(check.optional)
             self.assertEqual(check.fix_cmd, "")
             self.assertIsNone(check.fix_fn)
             self.assertIn("필요할 때만", check.detail)
@@ -1336,6 +1337,7 @@ class TestDoctorAgentsBlock(unittest.TestCase):
             check = next(c for c in _doctor._build_checks(root) if c.label.startswith("AGENTS.md "))
 
             self.assertFalse(check.ok)
+            self.assertFalse(check.optional)
             self.assertEqual(check.fix_cmd, "python3 scripts/install.py --target .")
 
     def test_doctor_requires_latest_agents_block_not_just_markers(self):

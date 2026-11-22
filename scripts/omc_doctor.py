@@ -280,6 +280,7 @@ def _build_checks(root: Path) -> list[Check]:
         agents_ok,
         detail=detail,
         fix_cmd="" if agents_exists else "python3 scripts/install.py --target .",
+        optional=agents_exists,
     ))
 
     # ── 잔존 구버전 참조 체크 ───────────────────────────────────────────────
