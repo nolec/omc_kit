@@ -42,6 +42,7 @@ _SOURCE_ONLY_AGENT_HOOKS = {
     ".agent-hooks/omc-before-agent.sh",
     ".agent-hooks/omc-post-file-check.sh",
     ".agent-hooks/omc-session-end.sh",
+    ".agent-hooks/omc-prompt-inject.sh",
 }
 AGENTS_OMC_END = "<!-- OMC:END -->"
 AGENTS_OMC_VERSION = "<!-- OMC:AGENTS:V1 -->"

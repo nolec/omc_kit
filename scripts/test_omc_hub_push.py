@@ -168,6 +168,7 @@ SOURCE_ONLY_HOOK_NAMES = (
     'omc-before-agent.sh',
     'omc-post-file-check.sh',
     'omc-session-end.sh',
+    'omc-prompt-inject.sh',
 )
 
 
