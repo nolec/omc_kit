@@ -97,6 +97,7 @@ _LOCAL_RUNTIME_PATHS = {
     ".omc/state/",
     ".omc/summary.md",
     ".omc/tasks/",
+    ".omc/wip/latest.json",
     _OMC_BYTECODE_PATH,
 }
 

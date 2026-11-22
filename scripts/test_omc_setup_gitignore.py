@@ -125,6 +125,8 @@ def test_reinstall_only_adds_missing_git_rules(tmp_path: Path, has_managed_block
     assert b"/keep-visible.md" not in after
     assert b"/new-managed.md\r\n" in after
     assert _git(tmp_path, "check-ignore", "new-managed.md").returncode == 0
+    assert _git(tmp_path, "check-ignore", ".omc/wip/latest.json").returncode == 0
+    assert _git(tmp_path, "check-ignore", ".omc/wip/shared.md").returncode == 1
     assert _git(tmp_path, "check-ignore", "keep-visible.md").returncode == 1
     timestamp = exclude.stat().st_mtime_ns
     update_managed_gitignore(tmp_path, receipt, preserve_existing=True)
@@ -216,6 +218,7 @@ def test_update_managed_gitignore_hides_consumer_runtime_without_hiding_quality_
     assert "/.omc/install-receipt.json" in content
     assert "/.omc/state/" in content
     assert "/.omc/context/" in content
+    assert "/.omc/wip/latest.json" in content
     assert "quality-gates.json" not in content
 
 
