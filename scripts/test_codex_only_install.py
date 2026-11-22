@@ -36,6 +36,46 @@ def test_fresh_install_is_codex_only(fresh):
         assert not (fresh / name).exists(), name
 
 
+@pytest.mark.parametrize('entrypoint', ['installer', 'setup'])
+def test_fresh_git_install_excludes_new_prompts_without_changing_user_rules(tmp_path, entrypoint):
+    target = tmp_path / 'project'
+    subprocess.run(['git', 'init', '-q', str(target)], check=True)
+    gitignore = target / '.gitignore'
+    gitignore.write_bytes(b'# Project rules\n/project-cache/\n')
+    exclude = target / '.git/info/exclude'
+    local_rules = b'# Local rules\n/local-note.txt\n'
+    exclude.write_bytes(local_rules)
+
+    args = ['install.py'] if entrypoint == 'installer' else ['omc.py', 'setup']
+    env = {**os.environ, 'OMC_INSTALLATION_REGISTRY_DIR': str(tmp_path / 'registry')}
+    result = subprocess.run(
+        [sys.executable, '-B', str(ROOT / 'scripts' / args[0]), *args[1:], '--target', str(target)],
+        cwd=ROOT, env=env, capture_output=True, text=True,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+    receipt = json.loads((target / '.omc/install-receipt.json').read_text())
+    for name in ('PROMPT_COMMON.md', 'PROMPT_COMMON_LEAN.md'):
+        assert (target / name).read_bytes() == (ROOT / 'templates' / name).read_bytes()
+        entry = receipt['entries'][name]
+        assert entry['setup_created'] is True
+        assert entry['ownership'] == 'exclusive_managed'
+        assert entry['policy'] == 'managed_exact'
+        ignored = subprocess.run(
+            ['git', 'check-ignore', '-v', '--', name], cwd=target, capture_output=True, text=True,
+        )
+        assert ignored.returncode == 0 and ignored.stdout.startswith('.git/info/exclude:')
+    assert gitignore.read_bytes() == b'# Project rules\n/project-cache/\n'
+    assert exclude.read_bytes().startswith(local_rules)
+    assert exclude.read_text().count('# OMC-KIT:BEGIN') == 1
+
+    audit = subprocess.run(
+        [sys.executable, '-B', str(ROOT / 'scripts/omc_install_audit.py'), '--strict', str(target)],
+        cwd=ROOT, capture_output=True, text=True,
+    )
+    assert audit.returncode == 0, audit.stdout + audit.stderr
+
+
 PR_CREATE = Path('.agents/skills/pr-create')
 PR_CREATE_FILES = ('SKILL.md', 'agents/openai.yaml')
 

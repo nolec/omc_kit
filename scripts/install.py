@@ -1088,15 +1088,6 @@ def _main() -> int:
         _copy(run_template, dst, force=force)
         _ensure_executable(dst)
 
-    # Base prompt template (recommended). Only write if missing unless --force.
-    prompt_common = templates / "PROMPT_COMMON.md"
-    if prompt_common.exists():
-        _copy(prompt_common, tgt / "PROMPT_COMMON.md", force=force)
-    
-    prompt_lean = templates / "PROMPT_COMMON_LEAN.md"
-    if prompt_lean.exists():
-        _copy(prompt_lean, tgt / "PROMPT_COMMON_LEAN.md", force=force)
-
     # Bootstrap instructions for agentic tools.
     # 타겟에 파일이 이미 있으면 OMC 섹션만 추가, 없으면 전체 복사.
     # 마커가 있는 파일은 중복 추가 방지. 없는 파일은 전체 복사.
