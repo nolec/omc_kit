@@ -170,6 +170,7 @@ SOURCE_ONLY_HOOK_NAMES = (
     'omc-session-end.sh',
     'omc-prompt-inject.sh',
     'omc-session-start.sh',
+    'omc-pipeline-check.sh',
 )
 
 
@@ -185,8 +186,9 @@ def test_new_install_and_strict_audit(tmp_path):
     )
     assert doctor.returncode == 0, doctor.stdout + doctor.stderr
     assert 'omc-session-start.sh' not in doctor.stdout
+    assert 'omc-pipeline-check.sh' not in doctor.stdout
     for label in (
-        '.agent-hooks/omc-pipeline-check.sh (hook_block 차단코드)',
+        'scripts/omc_pipeline_guard.py',
         '훅 파일 실행권한 (chmod +x)',
         'Codex automatic hooks disabled',
     ):
@@ -209,6 +211,7 @@ def test_reinstall_preserves_previous_legacy_hook(tmp_path, name, force, modifie
     original = (ROOT / 'templates' / relative).read_bytes()
     content = original + b'\n# local change\n' if modified else original
     hook = tmp_path / relative
+    hook.parent.mkdir(parents=True, exist_ok=True)
     hook.write_bytes(content)
     hook.chmod(0o644)
     receipt_path = tmp_path / '.omc/install-receipt.json'

@@ -10,7 +10,6 @@ test_omc_hook_block.py — 훅 차단 로직 단위 테스트
   5. .cursor/hooks/omc-pipeline-check.sh: pending + create_file → permission:allow
   6. .agent-hooks/omc-pipeline-check.sh: confirmed + Write → exit 2
   7. .agent-hooks/omc-pipeline-check.sh: pending + Write → exit 0
-  8. omc_doctor.py: 훅 차단 로직 검사 항목(hook_block) 존재
 """
 from __future__ import annotations
 
@@ -209,15 +208,6 @@ def test_prompt_inject_ambiguous_no_injection_on_pending(tmp_path: Path) -> None
     )
 
 
-def test_doctor_has_hook_block_check() -> None:
-    """omc_doctor.py에 훅 차단 로직 검사 항목이 존재해야 함."""
-    doctor_path = ROOT / "scripts" / "omc_doctor.py"
-    assert doctor_path.exists(), "scripts/omc_doctor.py 없음"
-    content = doctor_path.read_text(encoding="utf-8")
-    assert "hook_block" in content or "세션 없음" in content or "차단 로직" in content, (
-        "omc_doctor.py에 훅 차단 로직 검사 항목이 없음 — 'hook_block' 또는 '차단 로직' 키워드 필요"
-    )
-
 
 # ─────────────────────────────────────────────────────────────
 # 실행
@@ -232,7 +222,6 @@ def main() -> int:
         test_cursor_hook_allows_on_pending,
         test_claude_hook_exits2_on_confirmed,
         test_claude_hook_allows_on_pending,
-        test_doctor_has_hook_block_check,
     ]
     passed = 0
     failed = 0

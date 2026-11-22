@@ -332,14 +332,27 @@ def test_native_red_cannot_be_lowered_by_styled_filename_before_contract(project
     assert guard_cli(project,'check',str(project/path)).returncode==1
 
 
-def test_public_installer_and_installed_registration_cli(project):
+def test_public_installer_and_installed_pipeline_guard(project):
     install=subprocess.run([sys.executable,str(SCRIPTS/'install.py'),'--target',str(project)],capture_output=True,text=True)
     assert install.returncode==0,install.stdout+install.stderr
     installed=project/'scripts/omc_native_red_evidence.py'
     assert installed.read_bytes()==(SCRIPTS/installed.name).read_bytes()
-    assert (project/'.agent-hooks/omc-pipeline-check.sh').read_bytes()==(SCRIPTS.parent/'templates/.agent-hooks/omc-pipeline-check.sh').read_bytes()
+    assert not (project / '.agent-hooks/omc-pipeline-check.sh').exists()
+    guard_path = project / 'scripts/omc_pipeline_guard.py'
+
+    def installed_guard(*args):
+        return subprocess.run([sys.executable, str(guard_path), *args], cwd=project,
+                              capture_output=True, text=True)
+
+    product = (Path(TEST).parent / 'Ad.tsx').as_posix()
+    original = (project / product).read_bytes()
+    blocked = installed_guard('check', product)
+    assert blocked.returncode == 1 and 'CONTRACT' in blocked.stdout
     # Reuse real public setup/runner helpers, then register with the deployed CLI.
     configured(project)
+    assert installed_guard('check', TEST).returncode == 0
+    blocked = installed_guard('check', product)
+    assert blocked.returncode == 1 and 'native_red_registration_required' in blocked.stdout
     actual=subprocess.run([sys.executable,str(installed),'observe','--target',str(project)],capture_output=True,text=True)
     assert actual.returncode==0,actual.stdout+actual.stderr
     value=json.loads(actual.stdout)
@@ -349,9 +362,11 @@ def test_public_installer_and_installed_registration_cli(project):
     (project/'.omc/native-red/events.jsonl').write_text(''.join(json.dumps(r)+'\n' for r in rows))
     module().publish(project)
     ref=module().references(project)[0];_,path=evidence(project,ref)
-    result=subprocess.run([sys.executable,str(project/'scripts/omc_pipeline_guard.py'),'red-done',TEST,'--evidence-file',str(path)],cwd=project,capture_output=True,text=True)
-    assert result.returncode==0,result.stdout+result.stderr
-    assert value['failed_cases']==['new failure','old failure']
+    result = installed_guard('red-done', TEST, '--evidence-file', str(path))
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert installed_guard('check', product).returncode == 0
+    assert (project / product).read_bytes() == original
+    assert value['failed_cases'] == ['new failure', 'old failure']
 
 
 def test_native_wrapper_preserves_home_publisher_when_both_are_selected(project):

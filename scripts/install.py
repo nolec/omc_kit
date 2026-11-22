@@ -44,6 +44,7 @@ _SOURCE_ONLY_AGENT_HOOKS = {
     ".agent-hooks/omc-session-end.sh",
     ".agent-hooks/omc-prompt-inject.sh",
     ".agent-hooks/omc-session-start.sh",
+    ".agent-hooks/omc-pipeline-check.sh",
 }
 AGENTS_OMC_END = "<!-- OMC:END -->"
 AGENTS_OMC_VERSION = "<!-- OMC:AGENTS:V1 -->"

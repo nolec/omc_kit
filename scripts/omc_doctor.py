@@ -155,7 +155,8 @@ def _build_checks(root: Path) -> list[Check]:
     checks: list[Check] = []
 
     # ── 배포 스크립트 계약 (install.py와 공유) ───────────────────────────────
-    scripts = sorted(_load_deployed_script_names(root))
+    # Require the Python guard even if a target-based inventory omitted it.
+    scripts = sorted(_load_deployed_script_names(root) | {"omc_pipeline_guard.py"})
     for s in scripts:
         p = root / "scripts" / s
         checks.append(Check(
@@ -212,23 +213,8 @@ def _build_checks(root: Path) -> list[Check]:
         fix_cmd="python3 scripts/omc_cost.py record --task '첫 기록'",
     ))
 
-    # ── agent-hooks ──────────────────────────────────────────────────────────
+    # ── 설치된 레거시 훅만 실행권한 검사 ───────────────────────────────────
     hooks_dir = root / ".agent-hooks"
-
-    # ── .agent-hooks/omc-pipeline-check.sh 존재 + exit 2 차단 코드 ─────────
-    agent_pipeline_check = hooks_dir / "omc-pipeline-check.sh"
-    _agent_hook_content = agent_pipeline_check.read_text(encoding="utf-8") if agent_pipeline_check.exists() else ""
-    agent_hook_ok = agent_pipeline_check.exists() and (
-        "exit 2" in _agent_hook_content or "omc_pipeline_guard" in _agent_hook_content
-    )
-    checks.append(Check(
-        ".agent-hooks/omc-pipeline-check.sh (hook_block 차단코드)",
-        agent_hook_ok,
-        detail="" if agent_hook_ok else "파일 없음 또는 차단 코드(exit 2 / omc_pipeline_guard) 미포함 — 명시적 파이프라인 검증 스크립트 확인 필요",
-        fix_cmd="python3 scripts/install.py --target . --force",
-    ))
-
-    # ── 훅 파일 실행권한 검사 ─────────────────────────────────────────────────
     import stat as _stat
     hook_paths = [
         hooks_dir / "omc-session-start.sh",
@@ -246,7 +232,7 @@ def _build_checks(root: Path) -> list[Check]:
         "훅 파일 실행권한 (chmod +x)",
         exec_ok,
         detail="" if exec_ok else "실행권한 없음: " + ", ".join(p.name for p in non_exec),
-        fix_cmd="python3 scripts/install.py --target . --force",
+        fix_cmd="chmod u+x " + " ".join(str(p.relative_to(root)) for p in non_exec) if non_exec else "",
     ))
 
     # Disabled automatic hooks are an installation policy, not work approval.
