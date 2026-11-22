@@ -167,8 +167,47 @@ def test_new_install_and_strict_audit(tmp_path):
     result = subprocess.run([sys.executable, str(ROOT / 'scripts/install.py'), '--target', str(tmp_path)], cwd=ROOT, text=True, capture_output=True)
     assert result.returncode == 0, result.stdout + result.stderr
     assert not (tmp_path / '.cursor/rules/omc-hub-sync.mdc').exists()
+    assert not (tmp_path / '.agent-hooks/omc-hub-push.sh').exists()
+    expected = {p.name for p in (ROOT / 'templates/.agent-hooks').glob('*.sh')} - {'omc-hub-push.sh'}
+    assert {p.name for p in (tmp_path / '.agent-hooks').glob('*.sh')} == expected
     result = subprocess.run([sys.executable, str(ROOT / 'scripts/omc_install_audit.py'), str(tmp_path), '--strict'], cwd=ROOT, text=True, capture_output=True)
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.mark.parametrize('force', [False, True])
+@pytest.mark.parametrize('modified', [False, True])
+def test_reinstall_preserves_previous_hub_shell_file(tmp_path, force, modified):
+    import hashlib
+    import json
+
+    command = [sys.executable, '-B', str(ROOT / 'scripts/install.py'), '--target', str(tmp_path)]
+    initial = subprocess.run(command, cwd=ROOT, text=True, capture_output=True)
+    assert initial.returncode == 0, initial.stdout + initial.stderr
+    relative = '.agent-hooks/omc-hub-push.sh'
+    original = (ROOT / 'templates' / relative).read_bytes()
+    content = original + b'\n# local change\n' if modified else original
+    hook = tmp_path / relative
+    hook.write_bytes(content)
+    hook.chmod(0o644)
+    receipt_path = tmp_path / '.omc/install-receipt.json'
+    receipt = json.loads(receipt_path.read_text())
+    digest = hashlib.sha256(original).hexdigest()
+    receipt['entries'][relative] = {
+        'policy': 'managed_exact', 'status': 'updated', 'ownership': 'exclusive_managed',
+        'source_sha256': digest, 'target_sha256': digest,
+    }
+    receipt_path.write_text(json.dumps(receipt))
+
+    reinstall = subprocess.run(command + (['--force'] if force else []),
+                               cwd=ROOT, text=True, capture_output=True)
+    assert reinstall.returncode == 0, reinstall.stdout + reinstall.stderr
+    assert hook.read_bytes() == content
+    assert hook.stat().st_mode & 0o777 == 0o644
+    receipt = json.loads(receipt_path.read_text())
+    assert receipt['entries'][relative]['target_sha256'] == hashlib.sha256(content).hexdigest()
+    if modified:
+        assert 'preserved non-stub' in reinstall.stdout
+        assert receipt['entries'][relative]['policy'] == 'preserve'
 
 
 @pytest.mark.parametrize('surface', ['.claude', '.cursor'])

@@ -36,6 +36,7 @@ from omc_version import SourceIdentity, capture_source_identity
 
 AGENTS_OMC_BEGIN = "<!-- OMC:BEGIN -->"
 _RETIRED_HUB_RULE = ".cursor/rules/omc-hub-sync.mdc"
+_RETIRED_HUB_HOOK = ".agent-hooks/omc-hub-push.sh"
 AGENTS_OMC_END = "<!-- OMC:END -->"
 AGENTS_OMC_VERSION = "<!-- OMC:AGENTS:V1 -->"
 AGENTS_OMC_MARKER = "## OMC — Orchestrated Multi-agent Craft"
@@ -424,11 +425,11 @@ def _finalize_install_manifest(target: Path, manifest: dict[str, dict[str, str]]
 def _retain_previous_optional_outputs(
     target: Path, manifest: dict[str, dict[str, str]]
 ) -> None:
-    """Preserve previously installed optional or source-only files on reinstall."""
+    """Preserve previously installed files outside the default deployment."""
     for rel, entry in list(manifest.items()):
         relative = Path(rel)
         source_only_doc = relative.parent == Path("docs") and relative.name in SOURCE_ONLY_DOCUMENTS
-        if not source_only_doc and not relative.is_relative_to(_PR_CREATE_SKILL):
+        if not source_only_doc and rel != _RETIRED_HUB_HOOK and not relative.is_relative_to(_PR_CREATE_SKILL):
             continue
         installed = target / relative
         if not installed.is_file() or any(
@@ -1144,8 +1145,10 @@ def _main() -> int:
         for src in agent_hooks_src.rglob("*"):
             if not src.is_file():
                 continue
-            rel = src.relative_to(agent_hooks_src)
-            dst = tgt / ".agent-hooks" / rel
+            relative = Path(".agent-hooks") / src.relative_to(agent_hooks_src)
+            if relative.as_posix() == _RETIRED_HUB_HOOK:
+                continue
+            dst = tgt / relative
             _copy(src, dst, force=force)
             _ensure_executable(dst)
 
@@ -1229,7 +1232,7 @@ def _main() -> int:
             print(f"[install] Hub retirement: preserved residue {retired_rel}; inspect separately.")
     for retired_rel, stub_source in (
         ("scripts/omc_hub_push.py", source_kit / "scripts/omc_hub_push.py"),
-        (".agent-hooks/omc-hub-push.sh", source_kit / "templates/.agent-hooks/omc-hub-push.sh"),
+        (_RETIRED_HUB_HOOK, templates / _RETIRED_HUB_HOOK),
     ):
         installed = tgt / retired_rel
         if installed.is_symlink() or (
