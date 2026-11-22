@@ -36,6 +36,22 @@ def test_fresh_install_is_codex_only(fresh):
         assert not (fresh / name).exists(), name
 
 
+def test_doctor_treats_missing_cost_log_and_ethos_context_as_optional(fresh):
+    result = subprocess.run(
+        [sys.executable, '-B', str(fresh / 'scripts/omc_doctor.py'), '--target', str(fresh)],
+        cwd=fresh, capture_output=True, text=True,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    lines = [line.strip() for line in result.stdout.splitlines()]
+    assert any(line.startswith('[INFO] .omc/cost_log.jsonl') for line in lines)
+    assert any(line.startswith('[INFO] ETHOS.md 섹션 5') for line in lines)
+    assert not any(line.startswith('[WARN]') and ('cost_log.jsonl' in line or '섹션 5' in line)
+                   for line in lines)
+    assert 'omc_cost.py record' not in result.stdout
+    assert not (fresh / '.omc/cost_log.jsonl').exists()
+    assert any(line.startswith('[OK]   ETHOS.md 존재') for line in lines)
+
+
 @pytest.mark.parametrize('entrypoint', ['installer', 'setup'])
 def test_fresh_git_install_excludes_new_prompts_without_changing_user_rules(tmp_path, entrypoint):
     target = tmp_path / 'project'

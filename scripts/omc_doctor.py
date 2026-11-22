@@ -34,6 +34,11 @@ def _ok(label: str, detail: str = "") -> str:
     return f"  [OK]   {label}{suffix}"
 
 
+def _info(label: str, detail: str = "") -> str:
+    suffix = f" — {detail}" if detail else ""
+    return f"  [INFO] {label}{suffix}"
+
+
 def _warn(label: str, detail: str = "", fix: str = "") -> str:
     suffix = f" — {detail}" if detail else ""
     fix_hint = f"\n           FIX: {fix}" if fix else ""
@@ -59,12 +64,16 @@ def _ensure_executable(path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 class Check:
-    def __init__(self, label: str, ok: bool, detail: str = "", fix_cmd: str = "", fix_fn=None):
+    def __init__(
+        self, label: str, ok: bool, detail: str = "", fix_cmd: str = "", fix_fn=None, *,
+        optional: bool = False,
+    ):
         self.label = label
         self.ok = ok
         self.detail = detail
         self.fix_cmd = fix_cmd   # 사용자에게 보여줄 수동 수정 커맨드
         self.fix_fn = fix_fn     # --fix 시 실행할 함수 (callable or None)
+        self.optional = optional
 
 
 def _run_status(project_root: Path) -> tuple[bool, str]:
@@ -209,8 +218,8 @@ def _build_checks(root: Path) -> list[Check]:
     checks.append(Check(
         ".omc/cost_log.jsonl",
         cost_log.exists(),
-        detail=f"{cost_entries}개 기록됨" if cost_log.exists() else "",
-        fix_cmd="python3 scripts/omc_cost.py record --task '첫 기록'",
+        detail=f"{cost_entries}개 기록됨" if cost_log.exists() else "기록 없음. 비용 추적이 필요할 때만 실제 작업을 기록하세요.",
+        optional=True,
     ))
 
     # ── 설치된 레거시 훅만 실행권한 검사 ───────────────────────────────────
@@ -334,9 +343,10 @@ def _build_checks(root: Path) -> list[Check]:
         ethos_text = ethos_path.read_text(encoding="utf-8")
         placeholder_filled = "설치 후 이 섹션을 프로젝트에 맞게 채우세요" not in ethos_text
         checks.append(Check(
-            "ETHOS.md 섹션 5 (프로젝트 맥락) 작성 완료",
+            "ETHOS.md 섹션 5 (프로젝트 맥락)",
             placeholder_filled,
-            detail="플레이스홀더가 남아 있습니다. ETHOS.md 섹션 5를 프로젝트에 맞게 채우세요." if not placeholder_filled else "작성 완료",
+            detail="작성 완료" if placeholder_filled else "프로젝트 맥락을 문서화할 때만 작성하면 됩니다.",
+            optional=True,
         ))
 
 
@@ -404,6 +414,8 @@ def main() -> int:
     for c in checks:
         if c.ok:
             print(_ok(c.label))
+        elif c.optional:
+            print(_info(c.label, c.detail))
         else:
             warnings.append(c)
             print(_warn(c.label, c.detail, c.fix_cmd if not args.fix else ""))
@@ -459,7 +471,7 @@ def main() -> int:
         print("\n OMC 설치 상태 이상 없음")
         return 0
 
-    return 1 if [c for c in checks if not c.ok and c.label.startswith("scripts/")] else 0
+    return 1 if any(c.label.startswith("scripts/") for c in warnings) else 0
 
 
 if __name__ == "__main__":
