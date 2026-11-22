@@ -163,22 +163,25 @@ def test_legacy_copy(tmp_path, force):
     assert result.returncode == (2 if force else 0)
     assert ('retired' in result.stderr.lower()) if force else result.stdout == 'legacy\n'
 
+SOURCE_ONLY_HOOK_NAMES = (
+    'omc-hub-push.sh',
+    'omc-before-agent.sh',
+    'omc-post-file-check.sh',
+    'omc-session-end.sh',
+)
+
+
 def test_new_install_and_strict_audit(tmp_path):
     result = subprocess.run([sys.executable, str(ROOT / 'scripts/install.py'), '--target', str(tmp_path)], cwd=ROOT, text=True, capture_output=True)
     assert result.returncode == 0, result.stdout + result.stderr
     assert not (tmp_path / '.cursor/rules/omc-hub-sync.mdc').exists()
-    assert not (tmp_path / '.agent-hooks/omc-hub-push.sh').exists()
-    assert not (tmp_path / '.agent-hooks/omc-before-agent.sh').exists()
-    assert not (tmp_path / '.agent-hooks/omc-post-file-check.sh').exists()
-    expected = {p.name for p in (ROOT / 'templates/.agent-hooks').glob('*.sh')} - {
-        'omc-hub-push.sh', 'omc-before-agent.sh', 'omc-post-file-check.sh',
-    }
+    expected = {p.name for p in (ROOT / 'templates/.agent-hooks').glob('*.sh')} - set(SOURCE_ONLY_HOOK_NAMES)
     assert {p.name for p in (tmp_path / '.agent-hooks').glob('*.sh')} == expected
     result = subprocess.run([sys.executable, str(ROOT / 'scripts/omc_install_audit.py'), str(tmp_path), '--strict'], cwd=ROOT, text=True, capture_output=True)
     assert result.returncode == 0, result.stdout + result.stderr
 
 
-@pytest.mark.parametrize('name', ['omc-hub-push.sh', 'omc-before-agent.sh', 'omc-post-file-check.sh'])
+@pytest.mark.parametrize('name', SOURCE_ONLY_HOOK_NAMES)
 @pytest.mark.parametrize('force', [False, True])
 @pytest.mark.parametrize('modified', [False, True])
 def test_reinstall_preserves_previous_legacy_hook(tmp_path, name, force, modified):
