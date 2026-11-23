@@ -625,21 +625,11 @@ def _copy_quickstart(
     if dst.is_symlink() or dst.parent.is_symlink() or (dst.exists() and not dst.is_file()):
         manifest.pop(_QUICKSTART, None)
         return
+    src = source_kit / _QUICKSTART
     if dst.is_file():
-        previous = manifest.get(_QUICKSTART, {})
-        ownership = classify_receipt_entry_ownership(
-            {"schema_version": previous.get("previous_receipt_schema_version")},
-            _QUICKSTART,
-            previous,
-        )
-        if ownership != "exclusive_managed" or previous.get("previous_target_sha256") != _sha256_file(dst):
-            _register_preserved_output(dst)
-            return
-        if not force:
-            # Retain the prior ownership and content for a later explicit refresh.
-            previous["registered_current_install"] = True
-            return
-    _copy(source_kit / _QUICKSTART, dst, force=force, verbatim=True)
+        _refresh_receipt_verified_file(src, dst, _QUICKSTART, manifest.get(_QUICKSTART, {}))
+    else:
+        _copy(src, dst, force=force, verbatim=True)
 
 
 def _copy_deployed_script(
@@ -658,14 +648,20 @@ def _copy_deployed_script(
     if not dst.exists():
         _copy(src, dst, force=False)
         return
+    _refresh_receipt_verified_file(src, dst, rel, entry)
 
+
+def _refresh_receipt_verified_file(
+    src: Path, dst: Path, rel: str, entry: dict[str, str]
+) -> None:
+    """Refresh an existing regular file with verified ownership and content."""
     previous_hash = entry.get("previous_target_sha256")
     ownership = classify_receipt_entry_ownership(
         {"schema_version": entry.get("previous_receipt_schema_version")}, rel, entry
     )
     installed_stat = dst.stat()
     if (
-        entry["policy"] != "managed_exact"
+        entry.get("policy") != "managed_exact"
         or ownership != "exclusive_managed"
         or not previous_hash
         or installed_stat.st_nlink != 1

@@ -331,6 +331,41 @@ class TestSkillTemplateSsot(unittest.TestCase):
                 self.assertEqual((target / unchanged).stat().st_mtime_ns, unchanged_mtime)
                 self.assertEqual(entries[unchanged]["policy"], "managed_exact")
 
+    def test_non_force_refreshes_verified_quickstart_and_preserves_local_edit(self):
+        root = Path(__file__).resolve().parent.parent
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp).resolve()
+            path = "docs/omc_quickstart.md"
+            quickstart = target / path
+            receipt_path = target / ".omc/install-receipt.json"
+            command = [sys.executable, str(root / "scripts/install.py"), "--target", str(target)]
+
+            def install():
+                result = subprocess.run(command, input="", capture_output=True, text=True)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                return json.loads(receipt_path.read_text())["entries"][path]
+
+            install()
+            receipt = json.loads(receipt_path.read_text())
+            original = b"# Earlier OMC Quickstart\r\n"
+            quickstart.write_bytes(original)
+            old_hash = hashlib.sha256(original).hexdigest()
+            receipt["entries"][path].update(source_sha256=old_hash, target_sha256=old_hash)
+            receipt_path.write_text(json.dumps(receipt))
+
+            entry = install()
+            self.assertEqual(quickstart.read_bytes(), (root / path).read_bytes())
+            self.assertEqual(entry["change"], "changed_by_setup")
+            self.assertTrue(entry["setup_created"])
+            self.assertEqual(entry["source_sha256"], entry["target_sha256"])
+            self.assertEqual(install()["change"], "unchanged")
+
+            local = quickstart.read_bytes() + b"\nProject notes.\r\n"
+            quickstart.write_bytes(local)
+            self.assertEqual(install()["policy"], "preserve")
+            self.assertEqual(install()["policy"], "preserve")
+            self.assertEqual(quickstart.read_bytes(), local)
+
     def test_install_preserves_project_owned_quickstart(self):
         root = Path(__file__).parent.parent
         installer = root / "scripts" / "install.py"
