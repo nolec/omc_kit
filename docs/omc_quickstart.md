@@ -6,10 +6,39 @@
 
 | 필요한 때 | OMC 기능 |
 |---|---|
-| 작업을 시작하거나 다시 열었을 때 | `python3 scripts/omc.py state status --target .`로 작업 상태를 조회합니다. Superpowers 계획 원장이 있으면 `--superpowers-ledger`에 경로를 지정해 마지막 완료 범위를 현재 Git 이력과 대조할 수 있습니다. |
+| 작업을 시작하거나 다시 열었을 때 | `python3 scripts/omc.py state status --target .`로 작업 상태를 조회합니다. 중단한 Superpowers 작업이 있다면 아래 순서로 이어갑니다. |
 | 커밋 전에 다른 변경이 섞였는지 확인할 때 | `python3 scripts/omc.py scope-check --target . --expected-path scripts/example.py`로 요청 범위와 staged 경로를 비교합니다. |
 | 기존 검증에서 빠진 UI 확인 항목을 찾을 때 | Codex에서 `$omc-qa`를 호출하고 기존 테스트 결과와 실행 환경을 함께 전달합니다. |
 | 프로젝트 교훈을 찾을 때 | `python3 scripts/omc_lesson.py --target . search "키워드"`를 실행합니다. |
+
+### 새 Codex 세션에서 중단한 작업 이어가기
+
+1. **중단하기 전에 메모를 저장합니다.** 결정 사항, 남은 작업, 실패한 검증을 WIP에 기록합니다.
+
+   ```bash
+   python3 scripts/omc_context_save.py save \
+     --decisions "첫 번째 작업의 검증과 커밋을 마쳤음" \
+     --remaining "두 번째 작업의 초안을 마무리하고 검증할 것" \
+     --failed "두 번째 작업의 검증은 초안 상태에서 실패함"
+   ```
+
+2. **새 Codex 세션에서 같은 프로젝트와 작업 트리를 열고 WIP를 복원합니다.** 복원 출력에서 저장 커밋과 현재 HEAD의 관계를 확인합니다. `남은 작업 (저장 당시 메모)`는 중단 시점의 기록입니다. WIP는 메모를 보여주며, 미커밋 변경은 작업 트리와 Git 인덱스에서 확인합니다.
+
+   ```bash
+   python3 scripts/omc_context_save.py restore
+   ```
+
+3. **Superpowers 원장과 현재 Git 상태를 대조합니다.** 아래 `PLAN`을 해당 계획의 실제 디렉터리 이름으로 바꿉니다. 원장의 마지막 완료 범위가 `INCLUDED`인지 확인하고, 현재 브랜치와 staged·unstaged 변경을 살펴봅니다. `NOT_INCLUDED` 또는 `UNKNOWN`이면 브랜치와 커밋 이력을 먼저 확인합니다.
+
+   ```bash
+   python3 scripts/omc.py state status --target . \
+     --superpowers-ledger .superpowers/sdd/PLAN/progress.md
+   git status --short --branch
+   git diff
+   git diff --cached
+   ```
+
+4. **Superpowers로 첫 미완료 작업을 이어갑니다.** 원장과 Git에서 완료가 확인된 작업은 건너뜁니다. 이어서 작업한 변경을 검증·커밋한 뒤 원장을 갱신하고, 같은 `state status --superpowers-ledger` 명령으로 새 완료 범위를 실제 커밋과 다시 대조합니다.
 
 ## 현재 지원 범위
 
