@@ -22,7 +22,7 @@ Codex 스킬(`.agents/skills`)과 공통 엔진을 유지합니다. Claude Code�
 
 - **Review–Ship Integrity**: review 당시 canonical candidate를 봉인하고, 정상 commit은 같은 후보로 재구성해 통과시킵니다. 코드·테스트·untracked 파일·mode·symlink·submodule·amend/rebase 변화는 `review_stale`로 fail-close합니다.
 - **Quality Gate Evidence Contract**: README 같은 일반 문서가 아닌 명시적 quality-gate contract와 CI evidence에 local ship 검증 범위를 결속합니다. 사용자 소유 `.omc/quality-gates.json`은 `setup --force`로도 자동 변경하지 않습니다.
-- **Setup safety**: non-force 재설치는 기존 파일을 덮어쓰지 않습니다. 이미 OMC가 관리한 generated·marker-merged 파일은 audit bookkeeping을 갱신하고, 프로젝트 소유 파일은 preserve합니다.
+- **Setup safety**: 일반 재설치는 설치 영수증으로 소유권과 해시를 확인한 OMC 관리 스크립트를 `--force` 없이 갱신합니다. 프로젝트에서 수정한 파일의 내용은 보존합니다.
 
 이는 로컬 구현·회귀·receipt 재검증 근거입니다. 코드가 정확하거나 사람이 덜 수정한다는 제품 효과를 뜻하지는 않습니다.
 
@@ -47,7 +47,9 @@ cd omc_kit
 python3 scripts/install.py --target /path/to/your-project
 ```
 
-기존 파일을 OMC 최신 템플릿으로 갱신할 때만 `--force`를 사용합니다.
+기존 프로젝트에도 위 명령을 그대로 실행해 재설치합니다. 설치 영수증에 OMC 전용 관리 대상으로 기록되어 있고 현재 파일의 해시가 영수증과 일치하는 배포 스크립트는 `--force` 없이 갱신됩니다. 프로젝트에서 수정한 스크립트와 소유권을 확인할 수 없는 기존 스크립트는 보존합니다.
+
+기존 OMC 템플릿을 의도적으로 새로 적용할 때는 `--force`를 사용합니다.
 
 여러 저장소의 설치 목록을 사용자가 직접 관리하려면 한 번만 아래를 실행합니다. 이 registry는 기본 비활성이며, 이후 strict audit을 통과한 `omc.py setup` 대상만 사용자 로컬 상태에 기록합니다. Git에 쓰거나 자동 탐색·네트워크 전송을 하지 않습니다.
 
