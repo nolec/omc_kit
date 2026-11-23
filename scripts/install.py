@@ -6,6 +6,7 @@ import hashlib
 import json
 import stat
 import sys
+import tempfile
 import time
 from collections import Counter
 from datetime import datetime, timezone
@@ -276,9 +277,11 @@ def _build_install_manifest(source_kit: Path, target: Path) -> dict[str, dict[st
                 "registered_current_install": False,
             }
     for source in sorted((source_kit / "scripts").glob("*.py")):
-        if not (source.name.startswith("omc_") or source.name in _SCRIPTS_EXTRA):
+        if not is_deployed_script_name(source.name):
             continue
         rel = f"scripts/{source.name}"
+        if rel in manifest:
+            continue
         target_file = target / rel
         manifest[rel] = {
             "policy": "managed_exact",
@@ -637,6 +640,53 @@ def _copy_quickstart(
             previous["registered_current_install"] = True
             return
     _copy(source_kit / _QUICKSTART, dst, force=force, verbatim=True)
+
+
+def _copy_deployed_script(
+    src: Path, dst: Path, manifest: dict[str, dict[str, str]], *, force: bool
+) -> None:
+    """Refresh an existing script only when the receipt proves ownership and content."""
+    if force:
+        _copy(src, dst, force=True)
+        return
+
+    rel = f"scripts/{dst.name}"
+    entry = manifest[rel]
+    if dst.parent.is_symlink() or dst.is_symlink() or (dst.exists() and not dst.is_file()):
+        entry.update(policy="preserve", source_sha256="", registered_current_install=True)
+        return
+    if not dst.exists():
+        _copy(src, dst, force=False)
+        return
+
+    previous_hash = entry.get("previous_target_sha256")
+    ownership = classify_receipt_entry_ownership(
+        {"schema_version": entry.get("previous_receipt_schema_version")}, rel, entry
+    )
+    installed_stat = dst.stat()
+    if (
+        entry["policy"] != "managed_exact"
+        or ownership != "exclusive_managed"
+        or not previous_hash
+        or installed_stat.st_nlink != 1
+        or _sha256_file(dst) != previous_hash
+    ):
+        _register_preserved_output(dst)
+        return
+
+    source = src.read_bytes()
+    source_hash = hashlib.sha256(source).hexdigest()
+    if source_hash != previous_hash:
+        with tempfile.TemporaryDirectory(prefix=".omc-refresh-", dir=dst.parent) as scratch:
+            replacement = Path(scratch) / dst.name
+            replacement.write_bytes(source)
+            replacement.chmod(stat.S_IMODE(installed_stat.st_mode))
+            replacement.replace(dst)
+    entry.update(
+        source_sha256=source_hash,
+        target_sha256=source_hash,
+        registered_current_install=True,
+    )
 
 
 def _install_post_commit_hook(template: Path, hook: Path, *, force: bool) -> None:
@@ -1073,20 +1123,16 @@ def _main() -> int:
         print("[install] 중단됨")
         return 1
 
-    to_copy = [
-        (source_kit / "prompts" / name, tgt / "prompts" / name)
-        for name in sorted(DEPLOYED_PROMPTS)
-    ]
+    for name in sorted(DEPLOYED_PROMPTS):
+        _copy(source_kit / "prompts" / name, tgt / "prompts" / name, force=force)
 
     # scripts: 화이트리스트 방식 — 명시된 파일만 배포 (기본값: 제외)
     # omc_*.py 전체 자동 포함 + 비-omc_ 명시 목록
     # 새 파일 추가 시 이 목록에 없으면 자동 제외됨 (안전한 기본값)
-    scripts_src = source_kit / "scripts"
     for name in sorted(_deployed_script_names(source_kit)):
-        to_copy.append((scripts_src / name, tgt / "scripts" / name))
-
-    for s, d in to_copy:
-        _copy(s, d, force=force)
+        _copy_deployed_script(
+            source_kit / "scripts" / name, tgt / "scripts" / name, install_manifest, force=force
+        )
 
     for name in sorted(DEPLOYED_DOCUMENTS):
         if f"docs/{name}" == _QUICKSTART:
@@ -1250,7 +1296,7 @@ def _main() -> int:
     # Retired hooks/rules can survive ownership-safe pruning; do not imply
     # that a non-force installation has disabled an older executable.
     if not force:
-        print("[install] Hub retirement: non-force preserves existing executables/hooks; retirement is not guaranteed.")
+        print("[install] Hub retirement: non-force preserves unverified executables and existing hooks; retirement is not guaranteed.")
     for retired_rel in (".cursor/rules/omc-hub-sync.mdc",):
         if (tgt / retired_rel).exists() or (tgt / retired_rel).is_symlink():
             print(f"[install] Hub retirement: preserved residue {retired_rel}; inspect separately.")

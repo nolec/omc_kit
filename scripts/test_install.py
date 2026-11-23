@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -273,6 +274,62 @@ class TestSkillTemplateSsot(unittest.TestCase):
                 self.assertEqual(entry["policy"], policy)
                 self.assertEqual(entry["status"], "updated")
                 self.assertEqual(entry["source_sha256"], entry["target_sha256"])
+
+    def test_non_force_refreshes_only_receipt_verified_scripts(self):
+        root = Path(__file__).resolve().parent.parent
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp).resolve()
+            subprocess.run(["git", "init", "-q", str(target)], check=True)
+            command = [sys.executable, str(root / "scripts/install.py"), "--target", str(target)]
+
+            def reinstall():
+                result = subprocess.run(command, input="", capture_output=True, text=True)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+            reinstall()
+            receipt_path = target / ".omc/install-receipt.json"
+            receipt = json.loads(receipt_path.read_text())
+            old = b"# installed by an earlier version\n"
+            local = b"# project-maintained script\n"
+            refresh = "scripts/omc_doctor.py"
+            modified = "scripts/omc.py"
+            unclaimed = "scripts/install.py"
+            preserved = "scripts/omc_setup_gitignore.py"
+            shared = "scripts/omc_version.py"
+            linked = "scripts/compose_prompt.py"
+            unchanged = "scripts/omc_install_audit.py"
+            for path in (refresh, modified, unclaimed, preserved, shared, linked):
+                (target / path).write_bytes(old)
+                digest = hashlib.sha256(old).hexdigest()
+                receipt["entries"][path].update(source_sha256=digest, target_sha256=digest)
+            (target / refresh).chmod(0o750)
+            (target / modified).write_bytes(local)
+            receipt["entries"].pop(unclaimed)
+            receipt["entries"][preserved].update(policy="preserve", ownership="preserved")
+            outside = target / "project-tool.py"
+            os.link(target / shared, outside)
+            (target / linked).unlink()
+            (target / linked).symlink_to(outside)
+            receipt_path.write_text(json.dumps(receipt))
+            unchanged_mtime = (target / unchanged).stat().st_mtime_ns
+
+            for attempt in range(2):
+                reinstall()
+                entries = json.loads(receipt_path.read_text())["entries"]
+                self.assertEqual((target / refresh).read_bytes(), (root / refresh).read_bytes())
+                self.assertEqual((target / refresh).stat().st_mode & 0o777, 0o750)
+                self.assertEqual(entries[refresh]["policy"], "managed_exact")
+                self.assertEqual(entries[refresh]["ownership"], "exclusive_managed")
+                self.assertTrue(entries[refresh]["setup_created"])
+                self.assertEqual(entries[refresh]["change"], "unchanged" if attempt else "changed_by_setup")
+                for path, expected in ((modified, local), (unclaimed, old), (preserved, old), (shared, old)):
+                    self.assertEqual((target / path).read_bytes(), expected, path)
+                    self.assertEqual(entries[path]["policy"], "preserve", path)
+                self.assertEqual(outside.read_bytes(), old)
+                self.assertTrue((target / linked).is_symlink())
+                self.assertEqual(entries[linked]["policy"], "preserve")
+                self.assertEqual((target / unchanged).stat().st_mtime_ns, unchanged_mtime)
+                self.assertEqual(entries[unchanged]["policy"], "managed_exact")
 
     def test_install_preserves_project_owned_quickstart(self):
         root = Path(__file__).parent.parent
