@@ -238,6 +238,9 @@ def main() -> int:
     setup = sub.add_parser("setup", help="Install the kit into the current or target project.")
     setup.add_argument("--target", type=Path, default=Path.cwd(), help="Target repository root.")
     setup.add_argument("--force", action="store_true", help="Overwrite existing files.")
+    wip_notice = setup.add_mutually_exclusive_group()
+    wip_notice.add_argument("--with-wip-notice", dest="wip_notice", action="store_true", default=None)
+    wip_notice.add_argument("--without-wip-notice", dest="wip_notice", action="store_false")
     setup.add_argument("--with-pr-create", action="store_true", help="Install the optional pr-create skill.")
     setup.add_argument("--with-research-tasks", action="store_true", help="Install bundled research task definitions.")
     setup.add_argument("--with-shared-lessons", action="store_true", help="Install bundled shared lessons.")
@@ -753,6 +756,8 @@ def main() -> int:
         install_args = ["--target", str(target)]
         if args.force:
             install_args.append("--force")
+        if args.wip_notice is not None:
+            install_args.append("--with-wip-notice" if args.wip_notice else "--without-wip-notice")
         if args.with_pr_create:
             install_args.append("--with-pr-create")
         if args.with_research_tasks:

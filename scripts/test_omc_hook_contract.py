@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
+import pytest
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -119,3 +120,59 @@ def test_codex_contract_follows_required_hook_metadata_for_session_context():
 
     with patch.object(contract, "CODEX_HOOK_CONTRACT", patched):
         assert not contract.codex_has_session_context_hooks(data)
+
+
+def test_wip_notice_hook_ownership(tmp_path):
+    import json
+    from omc_hook_contract import configure_wip_notice_hooks, inspect_wip_notice_hooks
+
+    path = tmp_path / ".codex/hooks.json"
+    path.parent.mkdir()
+    original = {"hooks": {"SessionStart": [{"matcher": "startup", "hooks": [
+        {"type": "command", "command": "echo one", "timeout": 3},
+        {"type": "command", "command": "echo two"},
+    ]}], "Stop": [{"hooks": [{"type": "command", "command": "echo stop"}]}]}}
+    path.write_text(json.dumps(original))
+    path.chmod(0o640)
+    assert inspect_wip_notice_hooks(tmp_path) == "disabled"
+    configure_wip_notice_hooks(tmp_path, enabled=True)
+    before = path.read_bytes()
+    configure_wip_notice_hooks(tmp_path, enabled=True)
+    assert path.read_bytes() == before
+    assert path.stat().st_mode & 0o777 == 0o640
+    assert inspect_wip_notice_hooks(tmp_path) == "enabled"
+    config = json.loads(before)
+    assert config["hooks"]["SessionStart"][:-1] == original["hooks"]["SessionStart"]
+    assert config["hooks"]["Stop"] == original["hooks"]["Stop"]
+    configure_wip_notice_hooks(tmp_path, enabled=False)
+    configure_wip_notice_hooks(tmp_path, enabled=False)
+    assert inspect_wip_notice_hooks(tmp_path) == "disabled"
+    assert json.loads(path.read_bytes()) == original
+
+
+@pytest.mark.parametrize("raw", [
+    '{"hooks":{"Stop":[],"Stop":[]}}',
+    '{"hooks":{"Stop":[{"hooks":[{"command":"echo bad"}]}]}}',
+    '{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"python3 scripts/omc_wip_notice.py"}]}]}}',
+    '{"hooks":{"PreToolUse":[{"hooks":[{"type":"command","command":"sh .agent-hooks/omc-pipeline-check.sh"}]}]}}',
+    '{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"echo bad","timeout":{}}]}]}}',
+    '{"hooks":{"Stop":[{"hooks":[{"type":"prompt"}]}]}}',
+    'symlink',
+])
+def test_wip_notice_malformed_config(tmp_path, raw):
+    from omc_hook_contract import configure_wip_notice_hooks, inspect_wip_notice_hooks
+
+    path = tmp_path / ".codex/hooks.json"
+    path.parent.mkdir()
+    if raw == "symlink":
+        other = tmp_path / "other.json"
+        other.write_text('{"hooks":{}}')
+        path.symlink_to(other)
+    else:
+        path.write_text(raw)
+    before = path.read_bytes()
+    with pytest.raises(ValueError):
+        inspect_wip_notice_hooks(tmp_path)
+    with pytest.raises(ValueError):
+        configure_wip_notice_hooks(tmp_path, enabled=True)
+    assert path.read_bytes() == before

@@ -348,7 +348,7 @@ def test_doctor_accepts_absent_non_codex_integrations(fresh):
     checks = omc_doctor.run_checks(fresh)
     unsupported = [c for c in checks if any(n in c.label for n in ['.claude', '.gemini', '.cursor', '.agent/', 'Antigravity'])]
     assert not unsupported, [c.label for c in unsupported]
-    policy = [c for c in checks if c.label == 'Codex automatic hooks disabled']
+    policy = [c for c in checks if c.label == 'Codex OMC WIP notice']
     assert len(policy) == 1 and policy[0].ok
 
 
@@ -397,7 +397,7 @@ def test_doctor_cli_does_not_initialize_state(tmp_path):
 
 
 @pytest.mark.parametrize('force', [False, True])
-def test_enabled_codex_target_is_blocked_without_mutation(tmp_path, force):
+def test_wip_notice_preflight_leaves_target_unchanged(tmp_path, force):
     p = tmp_path / '.codex/hooks.json'
     p.parent.mkdir()
     original = b'{"hooks":{"SessionStart":[{"hooks":[{"command":"echo user-hook"}]}]}}'
@@ -408,7 +408,7 @@ def test_enabled_codex_target_is_blocked_without_mutation(tmp_path, force):
     assert sorted(str(q.relative_to(tmp_path)) for q in tmp_path.rglob('*')) == ['.codex', '.codex/hooks.json']
 
 
-def test_audit_rejects_enabled_hooks_even_when_preserved_by_receipt(tmp_path):
+def test_audit_rejects_malformed_hooks_even_when_preserved_by_receipt(tmp_path):
     install(tmp_path)
     p = tmp_path / '.codex/hooks.json'
     p.write_text('{"hooks":{"SessionStart":[{"hooks":[{"command":"echo bad"}]}]}}')
@@ -418,7 +418,7 @@ def test_audit_rejects_enabled_hooks_even_when_preserved_by_receipt(tmp_path):
     receipt_path.write_text(json.dumps(receipt))
     result = subprocess.run([sys.executable, '-B', str(ROOT / 'scripts/omc_install_audit.py'), '--strict', str(tmp_path)], capture_output=True, text=True)
     assert result.returncode != 0, result.stdout + result.stderr
-    assert 'hooks:automatic-execution-enabled-or-invalid' in result.stdout
+    assert 'hooks:invalid-project-config-or-unsupported-omc-hook' in result.stdout
 
 
 def test_doctor_does_not_warn_about_disabled_git_hooks(tmp_path):
@@ -430,3 +430,62 @@ def test_doctor_does_not_warn_about_disabled_git_hooks(tmp_path):
     check = next(c for c in omc_doctor.run_checks(tmp_path) if c.label == '훅 파일 실행권한 (chmod +x)')
     assert check.ok, check.detail
     assert hook.stat().st_mode & 0o777 == 0o644
+
+
+def test_wip_notice_reinstall_lifecycle(tmp_path):
+    target = tmp_path / "project"
+    target.mkdir()
+    subprocess.run(["git", "init", "-q", str(target)], check=True)
+    env = {**os.environ, "OMC_INSTALLATION_REGISTRY_DIR": str(tmp_path / "registry")}
+    setup = [sys.executable, "-B", str(ROOT / "scripts/omc.py"), "setup", "--target", str(target)]
+    installer = [sys.executable, "-B", str(ROOT / "scripts/install.py"), "--target", str(target)]
+
+    def run(command):
+        result = subprocess.run(command, capture_output=True, text=True, env=env)
+        assert result.returncode == 0, result.stdout + result.stderr
+
+    run(installer)
+    path = target / ".codex/hooks.json"
+    original = json.loads(path.read_text())
+    assert not any(original["hooks"].values())
+    original["hooks"]["SessionStart"] = [{"matcher": "startup", "hooks": [
+        {"type": "command", "command": "echo user-hook"},
+    ]}]
+    path.write_text(json.dumps(original))
+    run(setup + ["--with-wip-notice"])
+    enabled = path.read_bytes()
+    assert len(json.loads(enabled)["hooks"]["SessionStart"]) == 2
+    assert (target / "scripts/omc_wip_notice.py").is_file()
+    for command in [installer + ["--with-wip-notice"], installer, installer + ["--force"], setup]:
+        run(command)
+        assert path.read_bytes() == enabled
+    assert any(c.ok and "enabled" in c.detail for c in omc_doctor.run_checks(target)
+               if c.label == "Codex OMC WIP notice")
+    run([sys.executable, "-B", str(ROOT / "scripts/omc_install_audit.py"), "--strict", str(target)])
+    run(installer + ["--without-wip-notice"])
+    assert json.loads(path.read_bytes()) == original
+    disabled = path.read_bytes()
+    run(setup + ["--without-wip-notice"])
+    assert path.read_bytes() == disabled
+
+
+
+@pytest.mark.parametrize("opaque_config", ["non-directory", "malformed-hook-option"])
+def test_wip_notice_opaque_preflight_writes_nothing(tmp_path, opaque_config):
+    target = tmp_path / "project"
+    target.mkdir()
+    config_dir = target / ".codex"
+    if opaque_config == "non-directory":
+        config_dir.write_text("project-owned file")
+    else:
+        config_dir.mkdir()
+        (config_dir / "hooks.json").write_text(
+            '{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"true","timeout":{}}]}]}}'
+        )
+    before = {p.relative_to(target): p.read_bytes() for p in target.rglob("*") if p.is_file()}
+    result = subprocess.run(
+        [sys.executable, "-B", str(ROOT / "scripts/install.py"), "--target", str(target), "--with-wip-notice"],
+        capture_output=True, text=True,
+    )
+    assert result.returncode != 0
+    assert {p.relative_to(target): p.read_bytes() for p in target.rglob("*") if p.is_file()} == before

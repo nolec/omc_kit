@@ -17,6 +17,8 @@ from omc_hook_contract import (
     HOOK_CONTRACT_MARKERS,
     HOOK_CONTRACT_SUMMARY,
     codex_hooks_disabled,
+    configure_wip_notice_hooks,
+    inspect_wip_notice_hooks,
 )
 from omc_source_hash import (
     DEPLOYED_DOCUMENTS,
@@ -1064,6 +1066,9 @@ def _main() -> int:
     ap = argparse.ArgumentParser(description="Install OMC kit into a target repository.")
     ap.add_argument("--target", type=Path, required=True, help="Target repository root.")
     ap.add_argument("--force", action="store_true", help="Overwrite existing files.")
+    wip_notice = ap.add_mutually_exclusive_group()
+    wip_notice.add_argument("--with-wip-notice", dest="wip_notice", action="store_true", default=None)
+    wip_notice.add_argument("--without-wip-notice", dest="wip_notice", action="store_false")
     ap.add_argument("--with-pr-create", action="store_true", help="Install the optional pr-create skill.")
     ap.add_argument("--with-research-tasks", action="store_true", help="Install bundled research task definitions.")
     ap.add_argument("--with-shared-lessons", action="store_true", help="Install bundled shared lessons.")
@@ -1084,12 +1089,8 @@ def _main() -> int:
     force = bool(args.force)
     auto_update = bool(args.auto_update)
     migrate_shared_tasks = bool(args.migrate_shared_tasks)
-    # Refuse an enabled/unknown target before copying or rewriting any file.
-    existing_codex_hooks = tgt / ".codex" / "hooks.json"
-    if existing_codex_hooks.exists() or existing_codex_hooks.is_symlink():
-        if existing_codex_hooks.is_symlink() or existing_codex_hooks.parent.is_symlink():
-            raise ValueError("Codex hook target must be a regular local file")
-        _assert_codex_hook_contract(existing_codex_hooks)
+    # Reject invalid or ambiguous project hooks before writing installation files.
+    inspect_wip_notice_hooks(tgt)
     source_kit = _resolve_source_kit(kit, tgt)
     source_identity = capture_source_identity(source_kit)
     if auto_update:
@@ -1231,7 +1232,11 @@ def _main() -> int:
     codex_hooks_src = templates / ".codex" / "hooks.json"
     if codex_hooks_src.exists():
         _assert_codex_hook_contract(codex_hooks_src)
-        _copy(codex_hooks_src, tgt / ".codex" / "hooks.json", force=force)
+        configure_wip_notice_hooks(
+            tgt, enabled=args.wip_notice,
+            default=json.loads(codex_hooks_src.read_text(encoding="utf-8")),
+        )
+        _register_preserved_output(tgt / ".codex/hooks.json")
 
     # ── Cursor project hooks (optional, when template files exist) ───────────
     # ── Codex skills: templates/.agents/skills is the sole source ──

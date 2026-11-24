@@ -10,7 +10,7 @@ from collections import Counter
 from functools import lru_cache
 from pathlib import Path
 
-from omc_hook_contract import codex_hooks_disabled
+from omc_hook_contract import inspect_wip_notice_hooks
 from omc_git_hooks import resolve_completion_hook
 from omc_source_hash import source_sha256 as _source_sha256
 from omc_quality_gate import readiness as _quality_gate_readiness
@@ -263,15 +263,10 @@ def audit_target(
     resolved = target.resolve()
     completion_hook = completion_hook_readiness(resolved)
     hook_policy_errors = []
-    codex_hooks = resolved / ".codex/hooks.json"
-    if codex_hooks.exists() or codex_hooks.is_symlink():
-        try:
-            disabled = (not codex_hooks.is_symlink() and not codex_hooks.parent.is_symlink()
-                        and codex_hooks_disabled(json.loads(codex_hooks.read_text(encoding="utf-8"))))
-        except (OSError, ValueError, TypeError):
-            disabled = False
-        if not disabled:
-            hook_policy_errors.append("hooks:automatic-execution-enabled-or-invalid")
+    try:
+        inspect_wip_notice_hooks(resolved)
+    except (OSError, ValueError):
+        hook_policy_errors.append("hooks:invalid-project-config-or-unsupported-omc-hook")
     legacy_dir = resolved / "omc_kit" / "templates"
     metadata_path = _metadata_path(resolved)
     receipt_path = _receipt_path(resolved)

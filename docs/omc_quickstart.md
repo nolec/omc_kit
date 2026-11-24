@@ -40,9 +40,22 @@
 
 4. **Superpowers로 첫 미완료 작업을 이어갑니다.** 원장과 Git에서 완료가 확인된 작업은 건너뜁니다. 이어서 작업한 변경을 검증·커밋한 뒤 원장을 갱신하고, 같은 `state status --superpowers-ledger` 명령으로 새 완료 범위를 실제 커밋과 다시 대조합니다.
 
+### 저장한 작업 메모 알림 켜기
+
+작업 메모 알림은 기본값이 꺼짐입니다. 원하는 프로젝트의 루트에서 다음 명령으로 켜거나 끌 수 있습니다.
+
+```bash
+python3 scripts/omc.py setup --target . --with-wip-notice
+python3 scripts/omc.py setup --target . --without-wip-notice
+```
+
+설치기는 기존 Codex 훅을 보존하고, 옵션 없는 재설치는 프로젝트의 알림 선택을 유지합니다. 등록 후 Codex에서 해당 훅을 검토하고 신뢰한 다음 새 세션을 시작하세요. 프로젝트 경로를 옮겼다면 설치 전에 `.codex/hooks.json`의 이전 OMC 알림 그룹을 확인하고, 이전 경로를 가리키는 그룹을 제거한 뒤 다시 설정하세요.
+
+현재 worktree에 유효한 작업 메모가 있으면 Codex에 저장 커밋과 현재 HEAD의 관계를 한 줄로 전달합니다. 메모 복원과 Superpowers 원장 대조는 위 순서를 따릅니다.
+
 ## 현재 지원 범위
 
-OMC는 Codex Agent Skills(`.agents/skills`)와 공통 CLI를 지원합니다. Claude Code·Gemini CLI·Antigravity·Cursor 전용 설치 지원은 종료됐습니다. OMC 자동 세션·도구·Git 훅은 비활성 상태입니다.
+OMC는 Codex Agent Skills(`.agents/skills`)와 공통 CLI를 지원합니다. Claude Code·Gemini CLI·Antigravity·Cursor 전용 설치 지원은 종료됐습니다. 기본 설치에서 OMC 자동 훅은 꺼져 있습니다. 이 문서의 작업 메모 알림은 프로젝트별로 켤 수 있습니다.
 
 ## OMC 단독 운영 예시
 

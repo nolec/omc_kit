@@ -17,7 +17,7 @@ import subprocess
 from pathlib import Path
 
 import omc_install_audit
-from omc_hook_contract import codex_hooks_disabled
+from omc_hook_contract import inspect_wip_notice_hooks
 from omc_setup_gitignore import git_deleted_host_docs
 
 
@@ -245,15 +245,11 @@ def _build_checks(root: Path) -> list[Check]:
         fix_cmd="chmod u+x " + " ".join(str(p.relative_to(root)) for p in non_exec) if non_exec else "",
     ))
 
-    # Disabled automatic hooks are an installation policy, not work approval.
-    codex_hooks = root / ".codex" / "hooks.json"
-    disabled = False
     try:
-        disabled = codex_hooks_disabled(json.loads(codex_hooks.read_text(encoding="utf-8")))
-    except (OSError, ValueError, TypeError):
-        pass
-    checks.append(Check("Codex automatic hooks disabled", disabled,
-                        detail="manual engine guards remain available" if disabled else "invalid or enabled hook configuration"))
+        wip_notice = inspect_wip_notice_hooks(root)
+        checks.append(Check("Codex OMC WIP notice", True, detail=wip_notice))
+    except (OSError, ValueError) as exc:
+        checks.append(Check("Codex OMC WIP notice", False, detail=str(exc)))
 
     # ── Agent Skills (.agents/skills/ — Codex) ──────────────────────────────
     codex_skills_dir = root / ".agents" / "skills"
