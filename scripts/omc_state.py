@@ -3923,16 +3923,23 @@ def superpowers_ledger_status(root: Path, ledger: Path) -> dict[str, object]:
         report.update(task=task, recorded_base=base_prefix, recorded_end=end_prefix)
         if any(key in os.environ for key in (
             "GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY",
-            "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_NAMESPACE", "GIT_CONFIG_PARAMETERS",
-            "GIT_CONFIG_COUNT", "GIT_GRAFT_FILE", "GIT_SHALLOW_FILE",
+            "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_NAMESPACE", "GIT_GRAFT_FILE", "GIT_SHALLOW_FILE",
         )):
             return {**report, "reason": "git_environment_override"}
+
+        # Compare the selected checkout without Git -c settings inherited from Codex.
+        env = {
+            key: value for key, value in os.environ.items()
+            if key not in ("GIT_CONFIG_COUNT", "GIT_CONFIG_PARAMETERS")
+            and not key.startswith(("GIT_CONFIG_KEY_", "GIT_CONFIG_VALUE_"))
+        }
+        env.update(GIT_NO_LAZY_FETCH="1", GIT_TERMINAL_PROMPT="0")
 
         def git(*args: str) -> subprocess.CompletedProcess:
             return subprocess.run(
                 ["git", "--no-replace-objects", "--no-optional-locks", "-C", str(root), *args],
                 capture_output=True, timeout=5, check=False,
-                env={**os.environ, "GIT_NO_LAZY_FETCH": "1", "GIT_TERMINAL_PROMPT": "0"},
+                env=env,
             )
 
         def output(*args: str) -> bytes:
