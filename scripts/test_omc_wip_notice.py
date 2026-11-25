@@ -103,3 +103,34 @@ def test_notice_stays_local_and_read_only(repo):
     assert run_notice(repo, other).stdout == ""
     assert {p: p.read_bytes() for p in files} == before
     assert git(repo, "--no-optional-locks", "status", "--porcelain") == status
+
+
+@pytest.mark.parametrize(("advance", "message"), [
+    (False, "같은 지점"),
+    (True, "현재 이력이 앞섬"),
+])
+def test_notice_ignores_command_scoped_git_config(repo, advance, message):
+    saved = git(repo, "rev-parse", "HEAD")
+    if advance:
+        git(repo, "commit", "--allow-empty", "-qm", "next")
+    wip_path(repo).write_text(json.dumps({"saved_at": "today", "commit": saved}))
+    env = {
+        **os.environ,
+        "GIT_CONFIG_COUNT": "1",
+        "GIT_CONFIG_KEY_0": "core.worktree",
+        "GIT_CONFIG_VALUE_0": str(repo.parent / "external-worktree"),
+        "GIT_CONFIG_PARAMETERS": "invalid command-scoped parameters",
+    }
+    result = run_notice(repo, env=env)
+    assert result.returncode == 0, result.stderr
+    assert message in json.loads(result.stdout)["systemMessage"]
+
+
+@pytest.mark.parametrize("variable", ["GIT_DIR", "GIT_WORK_TREE", "GIT_OBJECT_DIRECTORY"])
+def test_notice_does_not_trust_git_identity_overrides(repo, variable):
+    saved = git(repo, "rev-parse", "HEAD")
+    wip_path(repo).write_text(json.dumps({"saved_at": "today", "commit": saved}))
+    env = {**os.environ, "GIT_CONFIG_COUNT": "0", variable: str(repo.parent / "external")}
+    result = run_notice(repo, env=env)
+    assert result.returncode == 0, result.stderr
+    assert "확인 불가" in json.loads(result.stdout)["systemMessage"]

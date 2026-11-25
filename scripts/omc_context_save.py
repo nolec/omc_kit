@@ -49,19 +49,30 @@ def _git_context(root: Path) -> dict:
     }
 
 
-def _restore_history(root: Path, saved_commit: object) -> tuple[str, str]:
+def _restore_history(
+    root: Path, saved_commit: object, *, ignore_command_config: bool = False
+) -> tuple[str, str]:
     """Return current HEAD and its relationship to the saved object ID."""
+    git_env = {**os.environ, "GIT_NO_LAZY_FETCH": "1"}
+    if ignore_command_config:
+        # Session hooks can inherit Git -c settings from the host launcher.
+        for name in tuple(git_env):
+            if name in ("GIT_CONFIG_COUNT", "GIT_CONFIG_PARAMETERS") or name.startswith(
+                ("GIT_CONFIG_KEY_", "GIT_CONFIG_VALUE_")
+            ):
+                del git_env[name]
+
     def git(*args: str) -> subprocess.CompletedProcess:
         return subprocess.run(
             ["git", "--no-replace-objects", "--no-optional-locks", *args],
             cwd=root, capture_output=True, text=True, timeout=5,
-            env={**os.environ, "GIT_NO_LAZY_FETCH": "1"},
+            env=git_env,
         )
 
     unknown = "확인 불가"
     head = ""
     try:
-        if any(name in os.environ for name in (
+        if any(name in git_env for name in (
             "GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY",
             "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_NAMESPACE", "GIT_GRAFT_FILE",
             "GIT_SHALLOW_FILE", "GIT_CONFIG_COUNT", "GIT_CONFIG_PARAMETERS",

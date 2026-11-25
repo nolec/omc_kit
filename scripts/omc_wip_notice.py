@@ -36,7 +36,7 @@ def build_notice(root: Path) -> dict[str, object] | None:
     if not isinstance(saved_at, str) or not saved_at.strip():
         return None
 
-    _, relation = _restore_history(root, data["commit"])
+    _, relation = _restore_history(root, data["commit"], ignore_command_config=True)
     message = (
         f"이 worktree에 저장된 작업 메모가 있습니다. 저장 커밋과 현재 HEAD: {relation}. "
         "이어가려면 WIP를 복원하고 Superpowers 원장을 Git과 대조하세요."
