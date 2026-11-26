@@ -159,7 +159,7 @@ def cmd_restore(root: Path) -> int:
         print(f"저장 시각  : {saved_at}")
     if branch or commit:
         print(f"브랜치/커밋: {branch} @ {commit}  {subject}")
-    head, relationship = _restore_history(root, commit)
+    head, relationship = _restore_history(root, commit, ignore_command_config=True)
     print(f"현재 HEAD  : {head or '확인 불가'}")
     print(f"저장 커밋과 현재 HEAD: {relationship}")
 

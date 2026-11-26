@@ -3,9 +3,12 @@ C1 — omc_context_save.py RED 테스트
 아직 omc_context_save.py가 없으므로 모두 FAIL 예상
 """
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
+
+import pytest
 
 ROOT = Path(__file__).parent.parent
 SCRIPT = ROOT / "scripts" / "omc_context_save.py"
@@ -95,6 +98,51 @@ class TestContextRestore:
             cwd=str(ROOT),
         )
         assert r.returncode in (0, 1), f"예상치 못한 종료 코드: {r.returncode}"
+
+
+@pytest.mark.parametrize(("override", "advance", "expected"), [
+    ("count", False, "같은 지점"),
+    ("parameters", False, "같은 지점"),
+    ("count", True, "현재 이력이 앞섬"),
+    ("parameters", True, "현재 이력이 앞섬"),
+    ("identity", False, "확인 불가"),
+])
+def test_restore_git_relationship_with_command_config(tmp_path, override, advance, expected):
+    env = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
+    env.update(OMC_PROJECT_ROOT=str(tmp_path),
+               OMC_WIP_PATH=str(tmp_path / ".omc/wip/latest.json"))
+
+    def git(*args):
+        return subprocess.check_output(
+            ["git", "-C", str(tmp_path), *args], env=env, text=True,
+        ).strip()
+
+    git("init", "-q")
+    git("-c", "user.name=WIP Test", "-c", "user.email=test@example.invalid",
+        "commit", "--allow-empty", "-qm", "saved")
+    saved = _run("save", "--remaining", "작업 메모", env=env)
+    assert saved.returncode == 0, saved.stderr
+    if advance:
+        git("-c", "user.name=WIP Test", "-c", "user.email=test@example.invalid",
+            "commit", "--allow-empty", "-qm", "next")
+    head = git("rev-parse", "HEAD")
+    wip = Path(env["OMC_WIP_PATH"])
+    original = wip.read_bytes()
+
+    if override in ("count", "identity"):
+        env.update(GIT_CONFIG_COUNT="1", GIT_CONFIG_KEY_0="core.worktree",
+                   GIT_CONFIG_VALUE_0=str(tmp_path / "other-worktree"))
+    if override == "parameters":
+        env["GIT_CONFIG_PARAMETERS"] = "invalid command-scoped parameters"
+    if override == "identity":
+        env["GIT_DIR"] = str(tmp_path / "other-repository")
+
+    result = _run("restore", env=env)
+    assert result.returncode == 0, result.stderr
+    assert "작업 메모" in result.stdout
+    assert wip.read_bytes() == original
+    assert f"저장 커밋과 현재 HEAD: {expected}" in result.stdout
+    assert f"현재 HEAD  : {'확인 불가' if override == 'identity' else head}" in result.stdout
 
 
 class TestContextSaveShortForm:
